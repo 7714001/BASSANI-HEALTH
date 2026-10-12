@@ -192,6 +192,12 @@ const ROUTING_KEYS = [
     note: "This one always goes straight to the ordering customer, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
   },
   {
+    key: "order_pay_before_collection_customer", group: "orders", icon: Mail, previewOnly: true,
+    title: "No Deposit, Pay Before Collection (Customer Notice)",
+    description: "Sent when Finance approves an order to go ahead with no deposit, paid in full before collection. Replaces the 50% deposit ask the customer was sent at confirm time, with the full amount and our banking details.",
+    note: "This one always goes straight to the ordering customer, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
+  },
+  {
     key: "order_cc", group: "orders", icon: Mail,
     title: "Order CC",
     description: "CC'd on order placed and order confirmed emails sent to resellers.",
@@ -249,10 +255,16 @@ const ROUTING_KEYS = [
   },
   {
     key: "finance_notification_to", group: "finance", icon: Mail,
-    title: "Finance: Payment Auto-Confirmed",
-    description: "Sent when the portal detects a paid invoice from bank records and auto-confirms the ticket — no manual click needed.",
-    note: "Add the Finance team addresses here. A single digest email is sent per check cycle listing all auto-confirmed invoices. If this list is empty, no email is sent but the ticket still advances automatically.",
+    title: "Finance: Payments",
+    description: "Finance's payment notices: when the portal auto-confirms a paid invoice from bank records; when a packed order is waiting on payment before the customer can be told it's ready to collect; and an 08:00 digest of packed orders still unpaid after 3 days.",
+    note: "Add the Finance team addresses here. If this list is empty, no email is sent, but waiting orders still show on Expected Payments and customers are still told automatically once paid.",
     placeholder: "finance@bassanihealth.com",
+  },
+  {
+    key: "payment_hold_finance", group: "finance", icon: Mail, previewOnly: true,
+    title: "Finance: Order Packed, Waiting on Payment (Preview)",
+    description: "Sent to the Finance: Payments list above when an order passes QA and RP but still has an amount owing. The customer's \"ready for collection\" email is held until the payment is recorded.",
+    note: "Recipients come from Finance: Payments above. Use Send Test to preview it.",
   },
   {
     key: "pop_uploaded_to", group: "finance", icon: Mail,
@@ -270,9 +282,9 @@ const ROUTING_KEYS = [
   },
   {
     key: "release_request_to", group: "finance", icon: Mail,
-    title: "Finance: Release on Account Requested",
-    description: "Triggered when a sales clerk asks for an order to skip the deposit because the customer has a payment agreement. The order stays at Awaiting Deposit until someone with release permission approves account terms and releases it, releases it as a one-off, or declines.",
-    note: "Add whoever holds the Release on Account permission. If this list is empty, the request still shows on the Sales Tickets list, but nobody is emailed about it.",
+    title: "Finance: No-Deposit Requested",
+    description: "Triggered when a sales clerk asks for an order to skip the deposit, either released on account (credit terms) or paid in full before collection. The order stays at Awaiting Deposit until Finance decides.",
+    note: "Add whoever decides these: Release on Account permission holders, and Finance who can approve pay before collection. If this list is empty, the request still shows on Deposit Requests, but nobody is emailed about it.",
     placeholder: "finance@bassanihealth.com",
   },
   {

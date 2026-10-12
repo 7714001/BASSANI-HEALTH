@@ -16,7 +16,7 @@ import {
   Mail, Paperclip, ExternalLink, ChevronUp, AlertTriangle,
   Search, Loader2, Link2, Pencil, Package,
   Download, RotateCcw, FileX, ReceiptText, Repeat, FileSearch, Upload, Monitor,
-  ClipboardCheck, RefreshCw, Percent, Star,
+  ClipboardCheck, RefreshCw, Percent, Star, Wallet,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Input, Select, Textarea,
@@ -91,18 +91,19 @@ function OrderBarcode({ orderRef }) {
 const STATUS_LABEL = {
   open: "Open (RFQ)", quote: "Quote", sale_order: "Confirmed",
   awaiting_deposit: "Awaiting Deposit",
-  confirmed_wip: "In Fulfilment", ready_for_collection: "Ready for Collection",
+  confirmed_wip: "In Fulfilment", awaiting_payment: "Awaiting Payment",
+  ready_for_collection: "Ready for Collection",
   incomplete: "Incomplete", partially_fulfilled: "Partially Fulfilled",
 };
 const STATUS_COLOR = {
   open: "gray", quote: "amber", sale_order: "blue",
   awaiting_deposit: "amber",
-  confirmed_wip: "teal", ready_for_collection: "green", incomplete: "orange",
+  confirmed_wip: "teal", awaiting_payment: "amber", ready_for_collection: "green", incomplete: "orange",
   partially_fulfilled: "amber",
 };
 const EXIT_LABEL  = { not_interested: "Not Interested", cancelled: "Cancelled", complete: "Complete" };
 const EXIT_COLOR  = { not_interested: "gray", cancelled: "red", complete: "green" };
-const FORWARD_STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "ready_for_collection", "partially_fulfilled", "incomplete"];
+const FORWARD_STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "awaiting_payment", "ready_for_collection", "partially_fulfilled", "incomplete"];
 
 // Admin Override reconciliation (2026-08-28) — matches
 // ticket_routes.py::_compute_override_gaps' gap keys exactly.
@@ -133,13 +134,14 @@ const R_STATUS_LABEL = {
   sale_order:           "Pending Confirmation",
   awaiting_deposit:     "Awaiting Deposit",
   confirmed_wip:        "In Fulfilment",
+  awaiting_payment:     "Packed, Awaiting Payment",
   ready_for_collection: "Ready for Collection",
   partially_fulfilled:  "Partially Fulfilled",
   incomplete:           "Unable to Fulfil",
 };
 const R_STATUS_COLOR = {
   quote: "amber", sale_order: "amber", awaiting_deposit: "amber", confirmed_wip: "teal",
-  ready_for_collection: "green", partially_fulfilled: "amber", incomplete: "orange",
+  awaiting_payment: "amber", ready_for_collection: "green", partially_fulfilled: "amber", incomplete: "orange",
 };
 const R_EXIT_LABEL = { not_interested: "Cancelled", cancelled: "Cancelled", complete: "Complete" };
 
@@ -1548,6 +1550,17 @@ export default function SalesTickets() {
   const [decideTermsForm, setDecideTermsForm]   = useState(null);
   const [decideSaving, setDecideSaving]         = useState(false);
   const [withdrawReleaseConfirm, setWithdrawReleaseConfirm] = useState(false);
+  // 8.69 — the third way through the deposit gate: pay before collection
+  // (no deposit; Finance approves; the customer is only told the order is
+  // ready once it's paid in full). releaseReqKind is what a sales clerk asks
+  // for; depositMode reuses the Register Deposit window for a payment that
+  // arrives on such an order before its final invoice exists.
+  const [pbcModal, setPbcModal]             = useState(false);
+  const [pbcCheck, setPbcCheck]             = useState(null);
+  const [pbcReason, setPbcReason]           = useState("");
+  const [pbcSaving, setPbcSaving]           = useState(false);
+  const [releaseReqKind, setReleaseReqKind] = useState("pay_before_collection");
+  const [depositMode, setDepositMode]       = useState("deposit"); // deposit | advance
 
   // Opens the modal immediately (2026-08-26, found live — the three parallel
   // fetches below, especially the Odoo payment-journals call, took long
@@ -1556,7 +1569,10 @@ export default function SalesTickets() {
   // waiting for all three to resolve first. The Payment Method dropdown and
   // submit button show their own loading state via depositDetailsLoading
   // until the data actually lands.
-  const openDepositModal = () => {
+  const openDepositModal = (mode) => {
+    // Called straight from onClick too, so `mode` may be a click event.
+    const isAdvanceMode = mode === "advance";
+    setDepositMode(isAdvanceMode ? "advance" : "deposit");
     const today = new Date().toISOString().split("T")[0];
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     setExistingInvoices([]);
@@ -1570,15 +1586,22 @@ export default function SalesTickets() {
         const [journalRes, orderRes, existingRes] = await Promise.all([
           api.get("/api/tickets/payment-journals", { params: detail?.order_id ? { order_id: detail.order_id } : {} }),
           detail?.order_id ? api.get(`/api/orders/${detail.order_id}`) : Promise.resolve(null),
-          api.get(`/api/tickets/${detail.id}/existing-invoices`).catch(() => ({ data: { invoices: [] } })),
+          isAdvanceMode
+            ? Promise.resolve({ data: { invoices: [] } })
+            : api.get(`/api/tickets/${detail.id}/existing-invoices`).catch(() => ({ data: { invoices: [] } })),
         ]);
         const journals = journalRes.data.journals || [];
         setDepositJournals(journals);
         const orderTotal = orderRes?.data?.amount_total || 0;
         setDepositOrderTotal(orderTotal);
+        // Pay before collection: default to what's still owing (the order
+        // total less anything already paid), not half.
+        const paidSoFar = (orderRes?.data?.invoices || [])
+          .reduce((sum, i) => sum + ((i.amount_total || 0) - (i.amount_residual || 0)), 0);
+        const owing = Math.max(0, orderTotal - paidSoFar);
         setDepositForm(f => ({
           ...f,
-          amount:     orderTotal ? (orderTotal / 2).toFixed(2) : "",
+          amount:     isAdvanceMode ? (owing ? owing.toFixed(2) : "") : (orderTotal ? (orderTotal / 2).toFixed(2) : ""),
           journal_id: journals[0]?.id ? String(journals[0].id) : "",
         }));
         setExistingInvoices(existingRes.data.invoices || []);
@@ -1635,10 +1658,12 @@ export default function SalesTickets() {
     if (invoice_type === "fixed" && !amount) return toast.error("Amount is required");
     if (invoice_type === "percentage" && (!percentage || percentage <= 0 || percentage > 100))
       return toast.error("Percentage must be between 1 and 100");
+    // Checked before setDepositSaving: returning after it left the button
+    // stuck on its spinner.
+    if (depositIsSmall && !smallDepositReason.trim())
+      return toast.error("Give a reason for a deposit under 10% of the order, or use Request No Deposit");
     setDepositSaving(true);
     const tid = detail.id;
-    if (depositIsSmall && !smallDepositReason.trim())
-      return toast.error("Give a reason for a deposit under 10% of the order, or use Request Release on Account");
     const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined,
                    small_deposit_reason: depositIsSmall ? smallDepositReason.trim() : undefined };
     if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
@@ -1647,6 +1672,8 @@ export default function SalesTickets() {
       const { data } = await api.post(`/api/tickets/${tid}/register-deposit`, body);
       if (data.warning) {
         toast(data.warning, { icon: "⚠️", duration: 10000 });
+      } else if (data.advance_payment) {
+        toast.success("Payment recorded. It will be deducted from the final invoice.");
       } else {
         toast.success("Deposit registered — order queued for packing");
       }
@@ -1674,10 +1701,15 @@ export default function SalesTickets() {
   const depositAmountEntered = depositForm.invoice_type === "fixed"
     ? parseFloat(depositForm.amount || 0)
     : depositOrderTotal * parseFloat(depositForm.percentage || 0) / 100;
-  const depositIsSmall = depositOrderTotal > 0 && depositAmountEntered > 0 && depositAmountEntered < depositOrderTotal * 0.10;
+  const depositIsSmall = depositMode !== "advance" && depositOrderTotal > 0 && depositAmountEntered > 0
+    && depositAmountEntered < depositOrderTotal * 0.10;
 
   // 8.71 — release on account requests
-  const openReleaseRequest = () => { setReleaseReqReason(""); setReleaseReqOpen(true); };
+  const openReleaseRequest = () => {
+    setReleaseReqReason("");
+    setReleaseReqKind(requestKinds.includes("pay_before_collection") ? "pay_before_collection" : (requestKinds[0] || "on_account"));
+    setReleaseReqOpen(true);
+  };
 
   // 8.70f — the customer's choice when an order can only ship in part. Sales
   // asks the customer and records it; the Orders team acts on it.
@@ -1705,7 +1737,7 @@ export default function SalesTickets() {
     if (!releaseReqReason.trim()) return toast.error("Tell Finance why this order shouldn't need a deposit");
     setReleaseReqSaving(true);
     try {
-      await api.post(`/api/tickets/${detail.id}/release-request`, { reason: releaseReqReason.trim() });
+      await api.post(`/api/tickets/${detail.id}/release-request`, { reason: releaseReqReason.trim(), kind: releaseReqKind });
       toast.success("Request sent to Finance");
       setReleaseReqOpen(false);
       refreshDetail(detail.id);
@@ -1727,7 +1759,12 @@ export default function SalesTickets() {
     setDecideTermId("");
     setDecideTermsData(null);
     setDecideTermsForm(null);
-    setDecision("terms");
+    // 8.69 — lead with what was asked for; Finance without release
+    // permission can only approve pay before collection (or decline it).
+    setDecision(
+      releaseReqPending && releaseReq?.kind === "pay_before_collection" ? "pbc"
+        : canRelease ? "terms" : "pbc"
+    );
     setDecideOpen(true);
     loadReleaseCheck(detail.id);
     const pid = detail.customer_company_id || detail.customer_id;
@@ -1739,7 +1776,7 @@ export default function SalesTickets() {
   const doDecide = async () => {
     const tid = detail.id;
     const note = decideNote.trim();
-    if (decision !== "terms" && !note) return toast.error("A note is required");
+    if (decision !== "terms" && !note && !(decision === "pbc" && releaseReqPending)) return toast.error("A note is required");
     setDecideSaving(true);
     try {
       if (decision === "terms") {
@@ -1754,6 +1791,11 @@ export default function SalesTickets() {
         const { data } = await api.post(`/api/tickets/${tid}/release-request/decide`, { decision: "release", note });
         if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
         else toast.success("Released on account — order queued for packing");
+      } else if (decision === "pbc") {
+        const { data } = await api.post(`/api/tickets/${tid}/release-request/decide`, { decision: "pay_before_collection", note });
+        if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+        else toast.success("Approved to pay before collection — order queued for packing");
+        (data.warnings || []).forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
       } else if (decision === "exception") {
         const { data } = await api.post(`/api/tickets/${tid}/release-request/decide`, {
           decision: "exception", note, payment_term_id: decideTermId ? parseInt(decideTermId) : undefined,
@@ -1781,6 +1823,30 @@ export default function SalesTickets() {
       refreshDetail(detail.id);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not send the pro-forma"); }
     finally { setSendingDepositProforma(false); }
+  };
+
+  // ── 8.69 — Pay before collection (direct, Finance) ──────────────────────────
+  const openPbcModal = () => {
+    setPbcReason("");
+    setPbcCheck(null);
+    setPbcModal(true);
+    api.get(`/api/tickets/${detail.id}/pay-before-collection/check`)
+      .then(r => setPbcCheck(r.data))
+      .catch(e => setPbcCheck({ blocks: [e.response?.data?.detail || "Could not check this order"] }));
+  };
+  const approvePbc = async () => {
+    if (!pbcReason.trim()) return toast.error("A reason is required");
+    setPbcSaving(true);
+    const tid = detail.id;
+    try {
+      const { data } = await api.post(`/api/tickets/${tid}/pay-before-collection`, { reason: pbcReason.trim() });
+      if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+      else toast.success("Approved to pay before collection — order queued for packing");
+      (data.warnings || []).forEach(w => toast(w, { icon: "⚠️", duration: 8000 }));
+      setPbcModal(false);
+      refreshDetail(tid);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not approve"); }
+    finally { setPbcSaving(false); }
   };
 
   // ── Balance Payment Registration ─────────────────────────────────────────
@@ -1836,7 +1902,9 @@ export default function SalesTickets() {
         note:       balanceForm.note || undefined,
       });
       const residual = r.data.amount_residual;
-      if (residual > 0) {
+      if (r.data.customer_notified) {
+        toast.success("Payment registered. The customer has been told their order is ready to collect.");
+      } else if (residual > 0) {
         toast.success(`Payment registered — R${residual.toLocaleString("en-ZA", { minimumFractionDigits: 2 })} still outstanding`);
       } else {
         toast.success("Payment registered — invoice fully paid in Odoo");
@@ -1860,11 +1928,19 @@ export default function SalesTickets() {
   // the final one raised at Mark Complete, so a payment can only be recorded
   // once that exists.
   const isOnAccount       = !!detail?.released_on_account_at;
+  // 8.69 — pay before collection: no deposit; paid in full before the
+  // customer is told the order is ready.
+  const isPbc             = detail?.payment_arrangement === "pay_before_collection";
+  const isAwaitingPayment = detail?.status === "awaiting_payment";
+  const hasFinalInvoice   = !!packingEntry?.invoice_id;
   const hasPayableInvoice = detailInvoices.some(i => i.move_type === "out_invoice" && i.state === "posted" && (i.amount_residual || 0) > 0);
   const balanceReady      = !detail?.is_sample && detail?.order_id && detailOutstanding > 0
-    && (detail?.payment_confirmed_at || (isOnAccount && hasPayableInvoice));
+    && (detail?.payment_confirmed_at || ((isOnAccount || isPbc) && hasPayableInvoice));
   const awaitingDepositGate = !detail?.is_sample && detail?.status === "awaiting_deposit"
-    && !detail?.payment_confirmed_at && !isOnAccount;
+    && !detail?.payment_confirmed_at && !isOnAccount && !isPbc;
+  // A payment that arrives on a pay-before-collection order before its final
+  // invoice exists (Mark Complete) is recorded like a deposit.
+  const canRecordAdvance  = isPbc && !hasFinalInvoice && detailOutstanding > 0.005 && canFinance && !detail?.exit_status;
   // Anyone holding the release permission can release at the deposit stage.
   // A customer with account terms on record opens the 8.68 release window; one
   // without opens the same window Finance uses for requests (approve terms and
@@ -1881,10 +1957,22 @@ export default function SalesTickets() {
   const releaseReq        = detail?.release_request;
   const releaseReqPending = awaitingDepositGate && releaseReq?.status === "pending";
   const isOwnReleaseReq   = releaseReqPending && releaseReq?.requested_by_id === user?.id;
-  const canDecideRelease  = releaseReqPending && canRelease && !isOwnReleaseReq;
-  // Requests are for people who can't release themselves.
+  const releaseReqIsPbc   = releaseReq?.kind === "pay_before_collection";
+  // 8.69 — Finance (deposit permission) can decide a request too, by
+  // approving pay before collection; declining an on-account request still
+  // needs the release permission (mirrors ticket_routes.py::_can_decide_request).
+  const canDecideRelease  = releaseReqPending && !isOwnReleaseReq && (canRelease || canFinance);
+  // Approve pay before collection directly, the way Finance registers a
+  // deposit directly.
+  const canApprovePbc     = awaitingDepositGate && (canFinance || canRelease) && !releaseReqPending;
+  // Requests are for people who can't do it themselves: on account needs the
+  // release permission, pay before collection needs Finance's.
+  const requestKinds      = [
+    ...(!canRelease ? ["on_account"] : []),
+    ...(!canRelease && !canFinance ? ["pay_before_collection"] : []),
+  ];
   const canRequestRelease = awaitingDepositGate && !releaseReqPending
-    && user?.role !== "customer" && !canRelease;
+    && user?.role !== "customer" && requestKinds.length > 0;
 
   // ── Next Step (2026-08-26) ───────────────────────────────────────────────────
   // Enterprise-pattern single "what do I do now" indicator (Salesforce Path /
@@ -1919,11 +2007,13 @@ export default function SalesTickets() {
     };
   } else if (canDecideRelease) {
     nextAction = {
-      key: "reviewRelease", icon: CreditCard, label: "Review Release Request", onClick: openDecide,
-      desc: `${releaseReq.requested_by_name || "A sales clerk"} asked to release this order without a deposit.`,
+      key: "reviewRelease", icon: CreditCard, label: "Review No-Deposit Request", onClick: openDecide,
+      desc: releaseReqIsPbc
+        ? `${releaseReq.requested_by_name || "A sales clerk"} asked for this order to be packed now and paid in full before collection.`
+        : `${releaseReq.requested_by_name || "A sales clerk"} asked to release this order on account, without a deposit.`,
       secondary: canFinance ? { key: "registerDeposit", icon: DollarSign, label: "Register Deposit", onClick: openDepositModal } : null,
     };
-  } else if (awaitingDepositGate && (canFinance || showReleaseOption)) {
+  } else if (awaitingDepositGate && (canFinance || showReleaseOption || canApprovePbc)) {
     const depositAction = canFinance
       ? { key: "registerDeposit", icon: DollarSign, label: "Register Deposit", onClick: openDepositModal }
       : null;
@@ -1932,18 +2022,23 @@ export default function SalesTickets() {
       : null;
     // An eligible account customer leads with Release on Account; everyone
     // else leads with the deposit, with release offered as the alternative.
-    const primary   = releaseFirst ? releaseAction : (depositAction || releaseAction);
+    const pbcAction = canApprovePbc
+      ? { key: "payBeforeCollection", icon: Wallet, label: "Pay Before Collection", onClick: openPbcModal }
+      : null;
+    const primary   = releaseFirst ? releaseAction : (depositAction || releaseAction || pbcAction);
     const secondary = releaseFirst ? depositAction : (depositAction ? releaseAction : null);
+    const tertiary  = primary?.key !== "payBeforeCollection" ? pbcAction : null;
     nextAction = {
       ...primary,
       desc: releaseFirst
         ? "This customer is approved for account terms. Release the order on account, or register a deposit if one is needed."
-        : showReleaseOption
-          ? "A deposit is required before this order can be queued for packing, unless you release it on account."
-          : "A deposit is required before this order can be queued for packing.",
+        : "Before this order can be packed: register a 50% deposit"
+          + (showReleaseOption ? ", release it on account" : "")
+          + (pbcAction ? ", or approve it to be paid in full before collection." : "."),
       secondary,
+      tertiary,
     };
-  } else if (!detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
+  } else if (!detail?.is_sample && !isOnAccount && !isPbc && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance) {
     nextAction = {
       key: "confirmPayment", icon: CreditCard, label: saving ? "Confirming…" : "Confirm Payment",
       desc: "Confirm the payment already registered against this order's invoice.",
@@ -1951,9 +2046,17 @@ export default function SalesTickets() {
     };
   } else if (balanceReady && canFinance) {
     nextAction = {
-      key: "registerBalance", icon: CreditCard, label: isOnAccount ? "Register Payment" : "Register Balance Payment",
-      desc: isOnAccount ? "This order was released on account. Record the customer's payment when it arrives." : "A balance remains outstanding on this order.",
+      key: "registerBalance", icon: CreditCard, label: (isOnAccount || isPbc) ? "Register Payment" : "Register Balance Payment",
+      desc: isAwaitingPayment
+        ? `Packed and signed off. ${fmtR(detailOutstanding)} is still owing. The customer is told it's ready to collect as soon as this is recorded.`
+        : isOnAccount ? "This order was released on account. Record the customer's payment when it arrives." : "A balance remains outstanding on this order.",
       onClick: openBalanceModal,
+    };
+  } else if (canRecordAdvance) {
+    nextAction = {
+      key: "recordAdvance", icon: Wallet, label: "Record Payment",
+      desc: `Approved to pay before collection. ${fmtR(detailOutstanding)} owing. Record the customer's payment when it arrives; they can pay now or once invoiced.`,
+      onClick: () => openDepositModal("advance"),
     };
   } else if (orderIsComplete && canRequestFeedback && detail?.order_id && !detail?.feedback_requested_at && !orderFeedback?.feedback) {
     nextAction = {
@@ -1969,6 +2072,9 @@ export default function SalesTickets() {
   if (!nextAction && detail && !detail.exit_status) {
     if (!detail.order_id) {
       waitingText = "No quote built yet.";
+    } else if (isAwaitingPayment) {
+      waitingText = `Packed and signed off. Waiting for payment of ${fmtR(detailOutstanding)}. `
+        + "The customer is told it's ready to collect automatically once Finance records it.";
     } else if (packingEntry?.status === "waiting_stock") {
       waitingText = "Order is queued for packing but waiting on stock.";
     } else if (packingEntry?.status === "queued") {
@@ -1981,10 +2087,12 @@ export default function SalesTickets() {
       waitingText = "Awaiting RP approval.";
     } else if (["ready", "complete", "collected"].includes(packingEntry?.status)) {
       waitingText = "Order packed and invoiced — awaiting customer collection.";
+    } else if (isPbc && hasFinalInvoice === false && packingEntry) {
+      waitingText = "Approved to pay before collection. Being packed.";
     } else if (detail.status === "awaiting_deposit" && detail.payment_confirmed_at) {
       waitingText = "Deposit registered — waiting for the order to reach the packing board.";
     } else if (releaseReqPending) {
-      waitingText = `Release on account requested by ${releaseReq.requested_by_name || "sales"}. Waiting for Finance to decide.`;
+      waitingText = `${releaseReqIsPbc ? "Pay before collection" : "Release on account"} requested by ${releaseReq.requested_by_name || "sales"}. Waiting for Finance to decide.`;
     } else if (awaitingDepositGate && detail.auto_release_held) {
       waitingText = `Not released automatically on account terms: ${(detail.auto_release_held.blocks || []).join(" ")} Waiting for a deposit, or ask Finance to release it.`;
     } else if (awaitingDepositGate) {
@@ -2009,14 +2117,16 @@ export default function SalesTickets() {
   const showEditQuote         = detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive;
   const showSendQuote         = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canDrive && nextAction?.key !== "sendQuote";
   const showConfirmOrderBtn   = detail?.order_id && detailOrder && ["draft", "sent"].includes(detailOrder.state) && canConfirmOrder && nextAction?.key !== "confirmOrder";
-  const inHero = (key) => nextAction?.key === key || nextAction?.secondary?.key === key;
+  const inHero = (key) => nextAction?.key === key || nextAction?.secondary?.key === key || nextAction?.tertiary?.key === key;
   const showRegisterDeposit   = awaitingDepositGate && canFinance && !inHero("registerDeposit");
   const showReleaseBtn        = showReleaseOption && !inHero("releaseOnAccount");
+  const showPbcBtn            = canApprovePbc && !inHero("payBeforeCollection");
+  const showRecordAdvanceBtn  = canRecordAdvance && !inHero("recordAdvance");
   // Shown under the Next Step waiting text when nothing else is actionable;
   // otherwise (e.g. the user can also register deposits) in the Actions card.
   const showRequestReleaseBtn = canRequestRelease && !!nextAction;
   const showReviewReleaseBtn  = canDecideRelease && !inHero("reviewRelease");
-  const showConfirmPaymentBtn = !detail?.is_sample && !isOnAccount && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
+  const showConfirmPaymentBtn = !detail?.is_sample && !isOnAccount && !isPbc && detail?.invoice_id && !detail?.payment_confirmed_at && canFinance && nextAction?.key !== "confirmPayment";
   // detailOutstanding > 0 is the direct fix for the bug this round started
   // from: this button used to show for any ticket with payment_confirmed_at
   // set, even one where the full amount was already registered as the
@@ -2026,7 +2136,7 @@ export default function SalesTickets() {
   const showMarkPopReviewed   = detail?.pop_awaiting_review && canFinance;
   const showMakeRecurring     = detail?.order_id && !detail?.recurring_order_id && canDrive;
   const showInvoiceActions    = !detail?.is_sample && detail?.invoice_id && !isReseller && canFinance;
-  const showResetInvoice      = showInvoiceActions && !detail?.payment_confirmed_at && !isOnAccount;
+  const showResetInvoice      = showInvoiceActions && !detail?.payment_confirmed_at && !isOnAccount && !isPbc;
   const showCancelQuote       = detail?.order_id && PRE_CONFIRM.has(detail?.status) && canDrive;
   const showLinkOrder         = !detail?.order_id && canDrive;
   const showNotInterested     = !detail?.order_id && canDrive;
@@ -2043,7 +2153,7 @@ export default function SalesTickets() {
   const showPartialDecision = !isReseller && !detail?.exit_status && (can("tickets.sales") || can("tickets.manage"))
     && (orderIsShort || !!detail?.partial_decision);
   const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount || showPartialDecision;
-  const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
+  const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showPbcBtn || showRecordAdvanceBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
   // ── Quote totals ──────────────────────────────────────────────────────────
@@ -2665,6 +2775,11 @@ export default function SalesTickets() {
                               <nextAction.secondary.icon size={14} />{nextAction.secondary.label}
                             </BtnSecondary>
                           )}
+                          {nextAction.tertiary && (
+                            <BtnSecondary onClick={nextAction.tertiary.onClick} className="w-full justify-center">
+                              <nextAction.tertiary.icon size={14} />{nextAction.tertiary.label}
+                            </BtnSecondary>
+                          )}
                         </>
                       ) : orderIsComplete && orderFeedback?.feedback ? (
                         <div className="space-y-1.5">
@@ -2688,7 +2803,7 @@ export default function SalesTickets() {
                           <p className="text-sm text-gray-500">{waitingText}</p>
                           {canRequestRelease && (
                             <BtnSecondary onClick={openReleaseRequest} className="w-full justify-center mt-1">
-                              <CreditCard size={14} />Request Release on Account
+                              <CreditCard size={14} />Request No Deposit
                             </BtnSecondary>
                           )}
                         </>
@@ -2787,11 +2902,11 @@ export default function SalesTickets() {
                     {/* 8.71 — release on account request: pending, or declined (while still awaiting a deposit) */}
                     {releaseReqPending && (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                        <p className="font-semibold">Release on account requested</p>
+                        <p className="font-semibold">{releaseReqIsPbc ? "Pay before collection requested" : "Release on account requested"}</p>
                         <p className="text-amber-700 mt-0.5">
                           {releaseReq.requested_by_name} on {fmtDate(releaseReq.requested_at)}: {releaseReq.reason}
                         </p>
-                        {(isOwnReleaseReq || canRelease) && (
+                        {(isOwnReleaseReq || canRelease || (releaseReqIsPbc && canFinance)) && (
                           <button onClick={() => setWithdrawReleaseConfirm(true)} className="mt-1 text-amber-700 underline hover:text-amber-900">Withdraw request</button>
                         )}
                       </div>
@@ -2804,7 +2919,7 @@ export default function SalesTickets() {
                     )}
                     {awaitingDepositGate && releaseReq?.status === "declined" && (
                       <div className="text-xs text-red-800 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">
-                        <p className="font-semibold">Release on account declined, deposit required</p>
+                        <p className="font-semibold">No-deposit request declined, deposit required</p>
                         <p className="text-red-700 mt-0.5">
                           {releaseReq.decided_by_name} on {fmtDate(releaseReq.decided_at)}{releaseReq.decision_note && <>: {releaseReq.decision_note}</>}
                         </p>
@@ -2823,6 +2938,28 @@ export default function SalesTickets() {
                             {detail.released_on_account_reason && <>: {detail.released_on_account_reason}</>}
                           </p>
                         )}
+                      </div>
+                    )}
+                    {/* 8.69 — pay before collection: who approved it, and what's owing */}
+                    {isPbc && (
+                      <div className="text-xs text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                        <p>
+                          <span className="font-semibold">Pay before collection</span>
+                          <span className="text-indigo-700"> · no deposit, {detailOutstanding > 0.005 ? `${fmtR(detailOutstanding)} owing` : "paid in full"}</span>
+                        </p>
+                        {!isReseller && (
+                          <p className="text-indigo-600 mt-0.5">
+                            Approved by {detail.pbc_approved_by_name || "Finance"} on {fmtDate(detail.pbc_approved_at)}
+                            {detail.pbc_reason && <>: {detail.pbc_reason}</>}
+                          </p>
+                        )}
+                        <p className="text-indigo-600 mt-0.5">The customer is only told the order is ready once it's paid in full.</p>
+                      </div>
+                    )}
+                    {isAwaitingPayment && !isPbc && (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        <p className="font-semibold">Packed, waiting on the balance ({fmtR(detailOutstanding)})</p>
+                        <p className="text-amber-700 mt-0.5">The customer is told it's ready to collect once Finance records the payment.</p>
                       </div>
                     )}
                     {detail.is_sample && (
@@ -3409,14 +3546,24 @@ export default function SalesTickets() {
                             <CreditCard size={14} className="text-teal-500 shrink-0" />Release on Account
                           </button>
                         )}
+                        {showPbcBtn && (
+                          <button onClick={openPbcModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors text-left">
+                            <Wallet size={14} className="text-indigo-500 shrink-0" />Pay Before Collection
+                          </button>
+                        )}
+                        {showRecordAdvanceBtn && (
+                          <button onClick={() => openDepositModal("advance")} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors text-left">
+                            <Wallet size={14} className="text-indigo-500 shrink-0" />Record Payment
+                          </button>
+                        )}
                         {showReviewReleaseBtn && (
                           <button onClick={openDecide} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
-                            <CreditCard size={14} className="text-teal-500 shrink-0" />Review Release Request
+                            <CreditCard size={14} className="text-teal-500 shrink-0" />Review No-Deposit Request
                           </button>
                         )}
                         {showRequestReleaseBtn && (
                           <button onClick={openReleaseRequest} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
-                            <CreditCard size={14} className="text-teal-500 shrink-0" />Request Release on Account
+                            <CreditCard size={14} className="text-teal-500 shrink-0" />Request No Deposit
                           </button>
                         )}
 
@@ -3429,7 +3576,7 @@ export default function SalesTickets() {
 
                         {showRegisterBalance && (
                           <button onClick={openBalanceModal} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 rounded-lg transition-colors text-left">
-                            <CreditCard size={14} className="text-blue-500 shrink-0" />{isOnAccount ? "Register Payment" : "Register Balance Payment"}
+                            <CreditCard size={14} className="text-blue-500 shrink-0" />{(isOnAccount || isPbc) ? "Register Payment" : "Register Balance Payment"}
                           </button>
                         )}
 
@@ -4019,14 +4166,16 @@ export default function SalesTickets() {
 
         {/* 8.47 — Deposit registration modal */}
         {depositModal && (
-          <Modal title="Register Deposit" onClose={() => setDepositModal(false)}>
+          <Modal title={depositMode === "advance" ? "Record Payment" : "Register Deposit"} onClose={() => setDepositModal(false)}>
             <p className="text-xs text-gray-500 mb-4">
-              Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds.
+              {depositMode === "advance"
+                ? "This order is to be paid before collection and hasn't been invoiced yet. Recording the payment now creates a paid advance invoice in Odoo, which is deducted from the final invoice when the order is marked complete. If the full amount is paid, the customer is told the order is ready as soon as it's packed and signed off."
+                : "Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds."}
             </p>
             {/* An approved account customer was sent the no-deposit
                 confirmation at confirm time — if this order needs a deposit
                 after all, they need the deposit pro-forma first. */}
-            {releaseCheck?.terms?.status === "approved" && (
+            {depositMode !== "advance" && releaseCheck?.terms?.status === "approved" && (
               <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 flex items-start justify-between gap-3">
                 <p className="text-xs text-blue-800">
                   This customer has account terms, so they were told no deposit is needed.
@@ -4087,7 +4236,7 @@ export default function SalesTickets() {
                 </div>
               </div>
             )}
-            <FormGroup label="Invoice Type" required>
+            <FormGroup label={depositMode === "advance" ? "Amount type" : "Invoice Type"} required>
               <div className="space-y-2">
                 {[
                   { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount — use the full order total here if the customer paid in full upfront" },
@@ -4160,7 +4309,7 @@ export default function SalesTickets() {
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerDeposit} disabled={depositSaving || depositDetailsLoading}>
                 {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                Register in Odoo
+                {depositMode === "advance" ? "Record Payment" : "Register in Odoo"}
               </BtnPrimary>
             </div>
           </Modal>
@@ -4196,15 +4345,33 @@ export default function SalesTickets() {
 
         {/* 8.71 — Request release on account (sales) */}
         {releaseReqOpen && (
-          <Modal title="Request Release on Account" onClose={() => setReleaseReqOpen(false)}>
+          <Modal title="Request No Deposit" onClose={() => setReleaseReqOpen(false)}>
             <p className="text-xs text-gray-500 mb-3">
-              Ask Finance to let this order go onto the packing board without a deposit. The final invoice is raised
-              at Mark Complete, unpaid. Finance can approve account terms for the customer, release just this order,
-              or decline. Nothing changes until they decide.
+              Ask Finance to let this order go onto the packing board without a deposit. Nothing changes until they decide.
             </p>
+            <FormGroup label="How should this order go ahead?" required>
+              <div className="space-y-2">
+                {[
+                  { value: "pay_before_collection", label: "Pay before collection",
+                    desc: "We pack it now. The customer pays the full amount before collecting, and is only told it's ready once paid." },
+                  { value: "on_account", label: "Release on account",
+                    desc: "The customer has a credit agreement. The invoice is raised at Mark Complete and paid later, per their terms." },
+                ].filter(o => requestKinds.includes(o.value)).map(opt => (
+                  <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${releaseReqKind === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
+                    <input type="radio" name="release_req_kind" checked={releaseReqKind === opt.value} onChange={() => setReleaseReqKind(opt.value)} className="mt-0.5 accent-bassani-600" />
+                    <span>
+                      <span className="block text-sm font-semibold text-gray-900">{opt.label}</span>
+                      <span className="block text-xs text-gray-500">{opt.desc}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </FormGroup>
             <FormGroup label="Why doesn't this order need a deposit?" required>
               <Textarea rows={3} value={releaseReqReason} onChange={e => setReleaseReqReason(e.target.value)}
-                placeholder="e.g. 30-day payment agreement with the owner, confirmed by Dean" autoFocus />
+                placeholder={releaseReqKind === "pay_before_collection"
+                  ? "e.g. Regular customer, pays by EFT before collecting"
+                  : "e.g. 30-day payment agreement with the owner, confirmed by Dean"} autoFocus />
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setReleaseReqOpen(false)} disabled={releaseReqSaving}>Cancel</BtnSecondary>
@@ -4217,7 +4384,7 @@ export default function SalesTickets() {
         )}
 
         {withdrawReleaseConfirm && (
-          <Modal title="Withdraw release request?" onClose={() => setWithdrawReleaseConfirm(false)}>
+          <Modal title="Withdraw no-deposit request?" onClose={() => setWithdrawReleaseConfirm(false)}>
             <p className="text-sm text-gray-600">The order stays at Awaiting Deposit. You can ask again later.</p>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setWithdrawReleaseConfirm(false)}>Cancel</BtnSecondary>
@@ -4228,10 +4395,13 @@ export default function SalesTickets() {
 
         {/* 8.71 — Decide a release request (tickets.release_on_account) */}
         {decideOpen && (
-          <Modal title={releaseReqPending ? "Review Release Request" : "Release on Account"} onClose={() => setDecideOpen(false)} width="max-w-2xl">
+          <Modal title={releaseReqPending ? "Review No-Deposit Request" : "Release on Account"} onClose={() => setDecideOpen(false)} width="max-w-2xl">
             {releaseReqPending ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-4 text-xs">
-                <p className="font-semibold text-amber-900">{releaseReq.requested_by_name} asked on {fmtDate(releaseReq.requested_at)}</p>
+                <p className="font-semibold text-amber-900">
+                  {releaseReq.requested_by_name} asked on {fmtDate(releaseReq.requested_at)}
+                  {" for "}{releaseReqIsPbc ? "pay before collection" : "release on account"}
+                </p>
                 <p className="text-amber-800 mt-0.5">{releaseReq.reason}</p>
                 <p className="text-amber-700 mt-1">Order total {fmtR(releaseReq.order_total || detailOrder?.amount_total || 0)}</p>
               </div>
@@ -4243,13 +4413,17 @@ export default function SalesTickets() {
             )}
             <div className="space-y-2 mb-4">
               {[
-                { value: "terms", label: releaseCheck?.eligible ? "Release on the customer's account terms" : "Approve account terms and release",
-                  desc: releaseCheck?.eligible
-                    ? "The customer is already approved and within their credit limit."
-                    : "Sets up standing terms for this customer, so future orders won't need a request." },
-                { value: "exception", label: "Release this order only",
-                  desc: "A one-off, with no standing terms. Recorded and audited as an exception." },
-                ...(releaseReqPending ? [{ value: "decline", label: "Decline, deposit required",
+                ...(canRelease ? [
+                  { value: "terms", label: releaseCheck?.eligible ? "Release on the customer's account terms" : "Approve account terms and release",
+                    desc: releaseCheck?.eligible
+                      ? "The customer is already approved and within their credit limit."
+                      : "Sets up standing terms for this customer, so future orders won't need a request." },
+                  { value: "exception", label: "Release this order only",
+                    desc: "A one-off, with no standing terms. Recorded and audited as an exception." },
+                ] : []),
+                ...((canRelease || canFinance) ? [{ value: "pbc", label: "Pay before collection",
+                  desc: "Pack it now with no deposit. The customer pays in full before collecting and is only told it's ready once paid. No credit is extended." }] : []),
+                ...(releaseReqPending && (canRelease || releaseReqIsPbc) ? [{ value: "decline", label: "Decline, deposit required",
                   desc: "Your note is emailed to the person who asked." }] : []),
               ].map(opt => (
                 <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${decision === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
@@ -4297,8 +4471,14 @@ export default function SalesTickets() {
               </FormGroup>
             )}
 
-            <FormGroup label={decision === "terms" ? "Note (optional)" : decision === "exception" ? "Why release this order without terms?" : "Reason for declining"}
-              required={decision !== "terms"}>
+            {decision === "pbc" && (
+              <p className="mb-3 text-xs text-gray-600">
+                The customer is emailed that no deposit is needed and the full {fmtR(detailOrder?.amount_total || 0)} is
+                payable before collection. If the order has credit payment terms, they're changed to immediate payment.
+              </p>
+            )}
+            <FormGroup label={decision === "terms" ? "Note (optional)" : decision === "exception" ? "Why release this order without terms?" : decision === "pbc" ? (releaseReqPending ? "Note (optional)" : "Why pay before collection?") : "Reason for declining"}
+              required={decision !== "terms" && !(decision === "pbc" && releaseReqPending)}>
               <Input value={decideNote} onChange={e => setDecideNote(e.target.value)}
                 placeholder={decision === "decline" ? "e.g. No signed agreement yet, please take a deposit" : "e.g. Owner confirmed 30-day payment, agreement to follow"} />
             </FormGroup>
@@ -4310,9 +4490,11 @@ export default function SalesTickets() {
               ) : (
                 <BtnPrimary onClick={doDecide}
                   disabled={decideSaving || (decision === "exception" && !decideNote.trim())
+                    || (decision === "pbc" && !releaseReqPending && !decideNote.trim())
                     || (decision === "terms" && (releaseCheckLoading || !releaseCheck || (!releaseCheck.eligible && (!can("customers.account_terms") || !decideTermsForm))))}>
                   {decideSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                  {decision === "terms" ? (releaseCheck?.eligible ? "Release on Account" : "Approve Terms and Release") : "Release This Order"}
+                  {decision === "terms" ? (releaseCheck?.eligible ? "Release on Account" : "Approve Terms and Release")
+                    : decision === "pbc" ? "Approve Pay Before Collection" : "Release This Order"}
                 </BtnPrimary>
               )}
             </div>
@@ -4390,6 +4572,50 @@ export default function SalesTickets() {
         )}
 
         {/* Balance payment modal */}
+        {/* 8.69 — Pay before collection (Finance, direct) */}
+        {pbcModal && (
+          <Modal title="Pay Before Collection" onClose={() => setPbcModal(false)}>
+            <p className="text-xs text-gray-500 mb-3">
+              Send this order to the packing board with no deposit. It's packed and signed off as normal, then the customer is
+              only told it's ready to collect once the full amount is paid. Goods can't be marked collected while anything is owing.
+            </p>
+            {!pbcCheck ? (
+              <div className="mb-3 flex items-center gap-2 text-xs text-gray-500"><Loader2 size={13} className="animate-spin" />Checking the order…</div>
+            ) : (
+              <div className="mb-3 space-y-2">
+                {(pbcCheck.blocks || []).map((b, i) => (
+                  <p key={i} className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">{b}</p>
+                ))}
+                {pbcCheck.order_total != null && (
+                  <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
+                    <p>Order {pbcCheck.order_ref}: <span className="font-semibold text-gray-900">{fmtR(pbcCheck.order_total)}</span> payable before collection</p>
+                    {pbcCheck.term_will_change && (
+                      <p>The order's payment terms ({pbcCheck.order_payment_term}) will be changed to immediate payment, so the invoice is due when raised.</p>
+                    )}
+                    <p>The customer is emailed that no deposit is needed, with our banking details.</p>
+                  </div>
+                )}
+                {pbcCheck.total_overdue > 0 && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                    This customer has {fmtR(pbcCheck.total_overdue)} overdue on other invoices.
+                  </p>
+                )}
+              </div>
+            )}
+            <FormGroup label="Why pay before collection?" required>
+              <Input value={pbcReason} onChange={e => setPbcReason(e.target.value)}
+                placeholder="e.g. Regular customer, always pays by EFT before collecting" autoFocus />
+            </FormGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setPbcModal(false)} disabled={pbcSaving}>Cancel</BtnSecondary>
+              <BtnPrimary onClick={approvePbc} disabled={pbcSaving || !pbcCheck || (pbcCheck.blocks || []).length > 0 || !pbcReason.trim()}>
+                {pbcSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
+                Approve and Queue for Packing
+              </BtnPrimary>
+            </div>
+          </Modal>
+        )}
+
         {balanceModal && (
           <Modal title="Register Balance Payment" onClose={() => setBalanceModal(false)}>
             <p className="text-xs text-gray-500 mb-1">
@@ -5194,8 +5420,13 @@ export default function SalesTickets() {
                     ? <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 size={12} />Confirmed</span>
                     : t.released_on_account_at
                       ? <Badge color="teal">On Account</Badge>
-                      : <span className="text-xs text-gray-400">—</span>
+                      : t.payment_arrangement === "pay_before_collection"
+                        ? <Badge color="indigo">Pay Before Collection</Badge>
+                        : <span className="text-xs text-gray-400">—</span>
                   }
+                  {t.status === "awaiting_payment" && (
+                    <Badge color="amber"><Wallet size={9} className="inline mr-0.5" />Awaiting Payment</Badge>
+                  )}
                   {/* POP badge (2026-08-21) — independent of the Confirmed
                       badge above: a deposit can already be confirmed while a
                       *new* proof of payment (for the balance) is still
@@ -5207,7 +5438,7 @@ export default function SalesTickets() {
                     <Badge color="amber"><Percent size={9} className="inline mr-0.5" />Discount Pending</Badge>
                   )}
                   {t.release_request?.status === "pending" && t.status === "awaiting_deposit" && (
-                    <Badge color="amber"><CreditCard size={9} className="inline mr-0.5" />Release Requested</Badge>
+                    <Badge color="amber"><CreditCard size={9} className="inline mr-0.5" />{t.release_request?.kind === "pay_before_collection" ? "Pay Before Collection Requested" : "Release Requested"}</Badge>
                   )}
                   {/* 8.64 — same color-coded status as the ticket detail's
                       decision banner and the Approvals page, so a sales rep

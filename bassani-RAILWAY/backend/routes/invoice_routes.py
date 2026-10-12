@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 import io
+import logging
 
 from typing import Optional, List
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from ownership import is_partner_owned_by
 from services.email_service import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
+logger = logging.getLogger(__name__)
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
@@ -542,10 +544,22 @@ class PaymentRegister(BaseModel):
     amount: Optional[float] = None       # defaults to full outstanding amount
 
 
+
+async def _release_collection_holds_for(invoice_id: int, background_tasks=None) -> None:
+    """8.69 — a payment on an invoice that a packed order is waiting on
+    tells the customer it's ready to collect. Never fails the payment."""
+    try:
+        from routes.packing_board_routes import release_collection_holds
+        await release_collection_holds(invoice_ids=[invoice_id], background_tasks=background_tasks)
+    except Exception as e:
+        logger.warning("release_collection_holds_after_payment_failed invoice_id=%s error=%s", invoice_id, e)
+
+
 @router.put("/{invoice_id}/pay")
 async def register_payment(
     invoice_id: int,
     body: PaymentRegister,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("invoices.record_payment")),
 ):
     """
@@ -596,6 +610,7 @@ async def register_payment(
         )
         await audit_log("invoice.pay", "invoice", invoice_id, user=current_user,
                         detail={"amount": amount, "payment_date": payment_date, "journal_id": body.journal_id})
+        await _release_collection_holds_for(invoice_id, background_tasks)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -653,6 +668,7 @@ class AllocateCreditBody(BaseModel):
 async def allocate_credit(
     invoice_id: int,
     body: AllocateCreditBody,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("invoices.record_payment")),
 ):
     odoo = get_odoo_client()
@@ -682,6 +698,7 @@ async def allocate_credit(
         after={"amount_residual": after.get("amount_residual"), "payment_state": after.get("payment_state")},
         detail={"line_id": body.line_id, "reference": match["reference"], "amount": match["amount"]},
     )
+    await _release_collection_holds_for(invoice_id, background_tasks)
     return {"success": True, "amount_residual": after.get("amount_residual"),
             "payment_state": after.get("payment_state")}
 

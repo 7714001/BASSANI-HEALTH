@@ -14,11 +14,11 @@ import toast from "react-hot-toast";
 import bwipjs from "bwip-js";
 import {
   ShieldCheck, Stethoscope, CheckCircle2, XCircle,
-  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor, ExternalLink, FileText,
+  AlertTriangle, Package, Clock, Truck, RefreshCw, Printer, FileSearch, Monitor, ExternalLink, FileText, Wallet,
 } from "lucide-react";
 import {
   TopBar, DataTable, Modal, FormGroup, Select, Textarea,
-  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate,
+  BtnPrimary, BtnSecondary, BtnDanger, Badge, LoadingState, EmptyState, fmtDate, fmtR,
   OdooPdfViewerModal, openMonitorDisplay,
   AgeTierBadge, AgePriorityStrip, SearchBar, FilterPill, ChipRow,
 } from "../components/UI";
@@ -68,11 +68,22 @@ const STATUS_LABEL = {
   cancelled:       "Cancelled",
   cleared:         "Cleared",
   waiting_stock:   "Waiting for Stock",
+  // 8.69 — display-only: a "complete" entry whose customer notice is held
+  // until the invoice is paid (see boardStatus below).
+  awaiting_payment: "Packed, Awaiting Payment",
 };
 const STATUS_COLOR = {
   queued: "gray", packing: "blue", ready: "amber", collected: "teal",
   complete: "green", incomplete: "orange", cancelled: "red", cleared: "gray",
-  waiting_stock: "amber",
+  waiting_stock: "amber", awaiting_payment: "amber",
+};
+// 8.69 — a packed, signed-off order isn't "Ready for Collection" until the
+// customer has actually been told so, which for a deposit or pay-before-
+// collection order only happens once it's paid.
+const isPaymentHeld = (e) => !!e?.payment_hold && !e?.collection_released_at;
+const boardStatus = (e) => (e?.status === "complete" && isPaymentHeld(e) ? "awaiting_payment" : e?.status);
+const ARRANGEMENT_LABEL = {
+  deposit: "50% deposit", on_account: "On account", pay_before_collection: "Pay before collection", sample: "Sample",
 };
 const TERMINAL = new Set(["complete", "incomplete", "cancelled", "collected", "cleared"]);
 const ALL_STATUSES = ["queued", "packing", "ready", "collected", "complete", "incomplete", "cancelled", "cleared", "waiting_stock"];
@@ -558,6 +569,26 @@ export default function OrdersTickets() {
         } else {
           waitingText = "Packed and approved. Waiting for an Orders Clerk to mark this order complete.";
         }
+      } else if (detail.status === "complete" && !detail.collected_at && (isPaymentHeld(detail)
+                 || (detail.payment_required_before_collection && detail.invoice_payment && !detail.invoice_payment.paid))) {
+        // 8.69 — packed and signed off, but not paid: the customer hasn't
+        // been told it's ready (or, for an order completed before 8.69, was
+        // told but still owes), and it can't be marked collected.
+        const owing = detail.invoice_payment?.amount_residual ?? detail.payment_hold_amount;
+        const waitMsg = `Waiting on payment${owing != null ? ` of ${fmtR(owing)}` : ""}`
+          + (detail.invoice_payment?.name ? ` (invoice ${detail.invoice_payment.name})` : "") + ". "
+          + (isPaymentHeld(detail)
+            ? "The customer is emailed that it's ready to collect automatically once Finance records the payment."
+            : "It can't be marked collected until Finance records the payment.");
+        if (canFinance && detail.ticket_id) {
+          nextAction = {
+            label: "Record Payment on Sales Ticket", icon: Wallet,
+            onClick: () => navigate("/tickets/sales", { state: { openTicketId: detail.ticket_id } }),
+            desc: waitMsg,
+          };
+        } else {
+          waitingText = waitMsg;
+        }
       } else if (detail.status === "complete" && !detail.collected_at) {
         if (canOrders) {
           nextAction = {
@@ -588,7 +619,7 @@ export default function OrdersTickets() {
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
         <TopBar
           title={detail?.customer_name || "Loading…"}
-          subtitle={detail ? `${detail.ps_num} — ${STATUS_LABEL[detail.status] || detail.status}` : ""}
+          subtitle={detail ? `${detail.ps_num} — ${STATUS_LABEL[boardStatus(detail)] || detail.status}` : ""}
           actions={
             <div className="flex items-center gap-2">
               {detail && detail.order_id && detail.odoo_picking_id && (
@@ -660,7 +691,18 @@ export default function OrdersTickets() {
               <div className="mb-4">
                 <HorizontalTimelineCard
                   order={detailOrder || { state: "sale", date_order: detail.queued_at }}
-                  ticket={{ status: "confirmed_wip", exit_status: null, incomplete_reason: null }}
+                  ticket={{
+                    status: "confirmed_wip", exit_status: null, incomplete_reason: null,
+                    // 8.69 — so the timeline orders Payment / Ready for
+                    // Collection correctly for this order's arrangement.
+                    payment_arrangement: detail.payment_arrangement === "sample" ? "deposit" : detail.payment_arrangement,
+                    is_sample: detail.payment_arrangement === "sample",
+                    released_on_account_at: detail.released_on_account_at,
+                    released_on_account_by_name: detail.released_on_account_by_name,
+                    on_account_payment_term: detail.on_account_payment_term,
+                    pbc_approved_at: detail.pbc_approved_at,
+                    pbc_approved_by_name: detail.pbc_approved_by_name,
+                  }}
                   packing={detail}
                   invoices={detailOrder?.invoices || []}
                   manufacturing_orders={mos}
@@ -678,7 +720,7 @@ export default function OrdersTickets() {
                       <div className="flex items-start justify-between mb-5">
                         <div>
                           <h2 className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
-                            {(STATUS_LABEL[detail.status] || detail.status).toUpperCase()}
+                            {(STATUS_LABEL[boardStatus(detail)] || detail.status).toUpperCase()}
                             {detail.is_backorder && (
                               <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 rounded px-2 py-0.5 align-middle">
                                 Backorder
@@ -698,7 +740,7 @@ export default function OrdersTickets() {
                           </p>
                         </div>
                         <div className="text-right">
-                          <Badge color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Badge>
+                          <Badge color={STATUS_COLOR[boardStatus(detail)]}>{STATUS_LABEL[boardStatus(detail)] || detail.status}</Badge>
                           <p className="text-xs text-gray-400 mt-1.5">Queued {fmtDate(detail.queued_at)}</p>
                           {detail.ps_num && <BarcodeImg text={detail.ps_num} style={{ marginLeft: "auto", marginTop: 8 }} />}
                         </div>
@@ -1048,6 +1090,50 @@ export default function OrdersTickets() {
                     </div>
                   )}
 
+                  {/* 8.69 — Payment: how this order is being paid and whether the
+                      customer has been told it's ready. Lets the Orders team see
+                      at a glance why a packed order isn't collectable yet. */}
+                  {detail.payment_arrangement && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                        <Wallet size={12} />Payment
+                      </p>
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="text-gray-500">Arrangement</span>
+                        <span className="font-medium text-gray-900">{ARRANGEMENT_LABEL[detail.payment_arrangement] || detail.payment_arrangement}</span>
+                      </div>
+                      {detail.payment_arrangement === "pay_before_collection" && detail.pbc_approved_by_name && (
+                        <p className="text-xs text-gray-400">Approved by {detail.pbc_approved_by_name}{detail.pbc_approved_at ? `, ${fmtDate(detail.pbc_approved_at)}` : ""}</p>
+                      )}
+                      {detail.invoice_payment ? (
+                        <>
+                          <div className="flex items-center justify-between gap-2 text-sm">
+                            <span className="text-gray-500">Invoice</span>
+                            <span className="font-mono text-xs text-gray-700">{detail.invoice_payment.name}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-sm">
+                            <span className="text-gray-500">Payment</span>
+                            {detail.invoice_payment.paid
+                              ? <Badge color="green">Paid</Badge>
+                              : <Badge color="amber">{fmtR(detail.invoice_payment.amount_residual)} owing</Badge>}
+                          </div>
+                        </>
+                      ) : ["complete", "collected"].includes(detail.status) ? null : (
+                        <p className="text-xs text-gray-400">The invoice is raised when the order is marked complete.</p>
+                      )}
+                      {["complete", "collected"].includes(detail.status) && (
+                        detail.customer_notified_at ? (
+                          <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle2 size={12} />Customer told it's ready, {fmtDate(detail.customer_notified_at)}</p>
+                        ) : isPaymentHeld(detail) ? (
+                          <p className="text-xs text-amber-700 flex items-center gap-1"><Clock size={12} />Customer not told yet: waiting on payment. They're emailed automatically once paid.</p>
+                        ) : null
+                      )}
+                      {detail.payment_required_before_collection && detail.status === "complete" && !detail.collected_at && detail.invoice_payment && !detail.invoice_payment.paid && (
+                        <p className="text-xs text-red-600">Can't be marked collected until paid.</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Sign-Off Detail — the full-width timeline above merges
                       QA+RP into a single "Compliance Sign-Off" node and only
                       ever keeps one approver's name, which isn't enough for
@@ -1380,7 +1466,7 @@ export default function OrdersTickets() {
     if (sourceFilter === "reseller" && e.ticket_source !== "reseller") return false;
     if (sourceFilter === "customer" && e.ticket_source !== "portal") return false;
     if (ageFilter && e.age_tier !== ageFilter) return false;
-    if (statusFilter.size > 0 && !statusFilter.has(e.status)) return false;
+    if (statusFilter.size > 0 && !statusFilter.has(boardStatus(e))) return false;
     // Once the server has answered for exactly this query its result set is
     // authoritative (it also matches company name and the TKT ref via the
     // linked ticket, which aren't on the entry itself); the instant
@@ -1509,8 +1595,8 @@ export default function OrdersTickets() {
               {(entries.some(e => e.age_tier === "overdue" || e.age_tier === "urgent")) && (
                 <span className="self-center text-gray-200 px-1 shrink-0 select-none">|</span>
               )}
-              {["queued", "packing", "ready", "complete", "incomplete", "waiting_stock"].map(s => {
-                const count = entries.filter(e => e.status === s).length;
+              {["queued", "packing", "ready", "awaiting_payment", "complete", "incomplete", "waiting_stock"].map(s => {
+                const count = entries.filter(e => boardStatus(e) === s).length;
                 return (
                   <FilterPill
                     key={s}
@@ -1519,7 +1605,7 @@ export default function OrdersTickets() {
                     label={
                       <>
                         {STATUS_LABEL[s] || s}
-                        {s === "waiting_stock" && count > 0 && (
+                        {["waiting_stock", "awaiting_payment"].includes(s) && count > 0 && (
                           <span className="ml-1.5 bg-amber-500 text-white rounded-full px-1.5 text-[10px]">{count}</span>
                         )}
                       </>
@@ -1545,7 +1631,10 @@ export default function OrdersTickets() {
               )},
               { id: "status", header: "Stage", cell: ({ row: { original: e } }) => (
                 <div className="flex items-center gap-1.5">
-                  <Badge color={STATUS_COLOR[e.status]}>{STATUS_LABEL[e.status] || e.status}</Badge>
+                  <Badge color={STATUS_COLOR[boardStatus(e)]}>{STATUS_LABEL[boardStatus(e)] || e.status}</Badge>
+                  {e.payment_arrangement === "pay_before_collection" && (
+                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 rounded px-1.5 py-0.5 shrink-0" title="No deposit. Paid in full before the customer is told it's ready.">Pay Before Collection</span>
+                  )}
                   {e.is_backorder && (
                     <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded px-1.5 py-0.5 shrink-0">Backorder</span>
                   )}

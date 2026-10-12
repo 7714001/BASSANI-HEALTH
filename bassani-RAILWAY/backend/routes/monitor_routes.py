@@ -232,10 +232,12 @@ def _collection_card(ticket: dict, board: dict) -> dict:
     }
 
 
-def _board_ready_card(entry: dict, assigned_name: str | None = None) -> dict:
+def _board_ready_card(entry: dict, assigned_name: str | None = None, status: str = "ready_for_collection") -> dict:
     """Card for a packing board 'complete' entry with no linked sales ticket.
-    Clock starts at completed_at — how long the order has been waiting for collection."""
-    clock   = entry.get("completed_at") or entry.get("queued_at", datetime.now(timezone.utc))
+    Clock starts at completed_at — how long the order has been waiting for collection.
+    status="awaiting_payment" (8.69): packed, notice held until paid; clock
+    starts when the hold began."""
+    clock   = (entry.get("payment_hold_at") if status == "awaiting_payment" else None)         or entry.get("completed_at") or entry.get("queued_at", datetime.now(timezone.utc))
     elapsed = _hours_elapsed(clock)
     return {
         "id":             entry.get("order_id", ""),
@@ -251,7 +253,7 @@ def _board_ready_card(entry: dict, assigned_name: str | None = None) -> dict:
         "is_sample":      entry.get("is_sample", False),
         "is_reseller":    entry.get("is_reseller", False),
         "reseller_name":  entry.get("reseller_name"),
-        "status":         "ready_for_collection",
+        "status":         status,
         "qa_approved_at": _iso(entry.get("qa_approved_at")),
         "rp_approved_at": _iso(entry.get("rp_approved_at")),
         "packer_name":    entry.get("packer_name") or entry.get("assigned_packer"),
@@ -474,6 +476,17 @@ async def get_monitor_data(token: str = Query("")):
             else:
                 rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
 
+    # 8.69 — packed and signed off, but the customer notice is held until the
+    # invoice is paid: its own column, so Ready to Collect only ever shows
+    # orders the customer has actually been told they can collect.
+    def _held(e: dict) -> bool:
+        return bool(e.get("payment_hold")) and not e.get("collection_released_at")
+
+    payment_col = [
+        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")), status="awaiting_payment")
+        for e in board_complete if _held(e)
+    ]
+
     quotes_col     = [_ticket_card(t, ticket_value_map.get(str(t.get("order_id")))) for t in open_quotes]
     deposit_col    = [_ticket_card(t, ticket_value_map.get(str(t.get("order_id")))) for t in awaiting_deposit_tickets]
     collection_col = [
@@ -482,15 +495,15 @@ async def get_monitor_data(token: str = Query("")):
     ] + [
         _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")))
         for e in board_complete
-        if e.get("order_id") not in covered_order_ids
+        if e.get("order_id") not in covered_order_ids and not _held(e)
     ]
 
     # Sort all columns oldest-first so the most urgent card is always at the top
-    for lst in [quotes_col, deposit_col, packing_col, qa_col, rp_col, collection_col]:
+    for lst in [quotes_col, deposit_col, packing_col, qa_col, rp_col, payment_col, collection_col]:
         lst.sort(key=lambda x: x["hours_elapsed"], reverse=True)
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
-    all_active    = quotes_col + deposit_col + packing_col + qa_col + rp_col + collection_col
+    all_active    = quotes_col + deposit_col + packing_col + qa_col + rp_col + payment_col + collection_col
     overdue_count = sum(1 for c in all_active if c["age_tier"] == "overdue")
     at_risk_count = sum(1 for c in all_active if c["age_tier"] == "urgent")
     oldest_hours  = max((c["hours_elapsed"] for c in all_active), default=None)
@@ -509,6 +522,7 @@ async def get_monitor_data(token: str = Query("")):
         "packing":    _col_total(packing_col),
         "qa":         _col_total(qa_col),
         "rp":         _col_total(rp_col),
+        "payment":    _col_total(payment_col),
         "collection": _col_total(collection_col),
     }
     pipeline_value = round(sum(column_totals.values()), 2)
@@ -543,6 +557,7 @@ async def get_monitor_data(token: str = Query("")):
             "oldest_hours":           round(oldest_hours, 1) if oldest_hours is not None else None,
             "pipeline_value":         pipeline_value,
             "revenue_at_risk":        revenue_at_risk,
+            "awaiting_payment_value": _col_total(payment_col),
         },
         "columns": {
             "quotes":     quotes_col,
@@ -550,6 +565,7 @@ async def get_monitor_data(token: str = Query("")):
             "packing":    packing_col,
             "qa":         qa_col,
             "rp":         rp_col,
+            "payment":    payment_col,
             "collection": collection_col,
         },
         "column_totals": column_totals,

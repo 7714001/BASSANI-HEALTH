@@ -25,6 +25,7 @@ from services.email_service import (
     send_discount_request_notification, send_release_request_notification,
     send_support_case_new_internal, send_support_case_received, send_support_sla_escalation,
     send_order_feedback_request,
+    send_order_confirmed_pay_before_collection, send_payment_hold_finance,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -161,6 +162,19 @@ TEST_EMAIL_SENDERS: dict = {
     ),
     "recurring_order_skipped_to": lambda to: send_recurring_order_skipped_internal(
         [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+    ),
+    # 8.69 — preview-only: sent to the customer when Finance approves pay
+    # before collection (no deposit).
+    "order_pay_before_collection_customer": lambda to: send_order_confirmed_pay_before_collection(
+        customer_email=to, customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        order_total=4250.00, pdf_bytes=b"%PDF-1.4 test", support_url=None,
+    ),
+    # 8.69 — preview-only: goes to finance_notification_to when a packed
+    # order is held waiting on payment (that key's own Send Test previews the
+    # payment-confirmed digest).
+    "payment_hold_finance": lambda to: send_payment_hold_finance(
+        [to], customer_name="Test Pharmacy (Pty) Ltd", order_ref="S00999",
+        invoice_ref="INV/2026/0999", amount_due=2125.00, arrangement="deposit",
     ),
     # Preview-only — this one always goes straight to the customer on file, not a
     # configurable staff list, so there's no matching EmailRoutingConfig field. It

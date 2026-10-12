@@ -26,6 +26,7 @@ from services.email_service import (
     send_backorder_daily_digest,
     send_mo_daily_digest,
     send_discount_reminder,
+    send_payment_hold_digest,
 )
 from routes.support_routes import run_support_sla_checks
 from routes.recurring_order_routes import (
@@ -98,6 +99,43 @@ async def check_stale_applications() -> None:
             {"id": app["id"]},
             {"$set": {"escalation_notified_at": datetime.now(timezone.utc)}},
         )
+
+
+async def run_payment_hold_digest() -> None:
+    """8.69 — 08:00 SAST: packed orders that have been waiting on payment for
+    3 days or more (7+ shown in red), sent to finance_notification_to. Finance
+    chases the customer; the customer is never sent automatic reminders."""
+    to = await _get_routing_list("finance_notification_to")
+    if not to:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+    entries = await col("packing_board").find({
+        "payment_hold": True, "collection_released_at": None,
+        "status": "complete", "payment_hold_at": {"$lte": cutoff},
+    }).to_list(length=500)
+    if not entries:
+        return
+    names = {}
+    try:
+        ids = [int(e["order_id"]) for e in entries if str(e.get("order_id", "")).isdigit()]
+        for o in get_odoo_client().search_read("sale.order", [("id", "in", ids)], fields=["id", "name"], limit=len(ids)):
+            names[str(o["id"])] = o["name"]
+    except Exception:
+        names = {}
+    now = datetime.now(timezone.utc)
+    items = []
+    for e in entries:
+        held_at = e.get("payment_hold_at")
+        if held_at and held_at.tzinfo is None:
+            held_at = held_at.replace(tzinfo=timezone.utc)
+        items.append({
+            "customer_name": e.get("customer_name", ""),
+            "order_ref": names.get(str(e.get("order_id")), str(e.get("order_id", ""))),
+            "amount_due": e.get("payment_hold_amount") or 0,
+            "days": int((now - held_at).total_seconds() // 86400) if held_at else 3,
+        })
+    items.sort(key=lambda i: -i["days"])
+    send_payment_hold_digest(to, items)
 
 
 async def run_qa_rp_digest() -> None:
@@ -243,6 +281,7 @@ def start_notification_schedulers() -> None:
     """Called once from server.py's startup event."""
     asyncio.create_task(_interval_loop("application_escalation", 1800, check_stale_applications))
     asyncio.create_task(_daily_loop("qa_rp", 17, 0, run_qa_rp_digest))
+    asyncio.create_task(_daily_loop("payment_hold", 8, 0, run_payment_hold_digest))
     asyncio.create_task(_daily_loop("backorder", 17, 0, run_backorder_digest))
     asyncio.create_task(_daily_loop("mo_digest", 17, 0, run_mo_digest))
     # Phase 8.46 — recurring orders: T-2-day notice/generation, then a same-day

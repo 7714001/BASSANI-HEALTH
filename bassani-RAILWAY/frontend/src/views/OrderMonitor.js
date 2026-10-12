@@ -22,6 +22,8 @@ const COLUMNS = [
   { key: "packing",    label: "Packing",           accent: "#8b5cf6" },
   { key: "qa",         label: "QA Review",         accent: "#06b6d4" },
   { key: "rp",         label: "RP Review",         accent: "#14b8a6" },
+  // 8.69 — packed and signed off, customer not told yet: waiting on payment
+  { key: "payment",    label: "Awaiting Payment",  accent: "#ea580c" },
   { key: "collection", label: "Ready to Collect",  accent: "#f59e0b" },
 ];
 

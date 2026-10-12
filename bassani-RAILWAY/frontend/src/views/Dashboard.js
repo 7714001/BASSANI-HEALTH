@@ -13,12 +13,12 @@ import { TopBar, StatCard, LoadingState, ErrorState, Badge, BtnPrimary, fmtR, fm
 // precedence and wording Views.js::Orders()'s own role-aware Status column
 // already uses correctly, backed by the same order.linked_ticket/
 // order.packing_status fields (report_routes.py::_attach_pipeline_status).
-const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
-const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
+const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", awaiting_payment:"Packed, Awaiting Payment", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
+const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", awaiting_payment:"amber", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
 const TICKET_EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
 const TICKET_EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
-const TICKET_STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
-const TICKET_STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
+const TICKET_STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", awaiting_payment:"Packed, Awaiting Payment", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
+const TICKET_STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", awaiting_payment:"amber", ready_for_collection:"green", incomplete:"orange" };
 function orderPipelineBadge(o) {
   if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
   const t = o.linked_ticket;

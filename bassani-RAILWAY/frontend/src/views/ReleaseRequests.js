@@ -1,8 +1,12 @@
-// Release Requests (8.71) — /tickets/release-requests, tickets.release_on_account.
+// Deposit Requests (8.71, renamed 8.69) — /tickets/release-requests.
 // The queue of orders a sales clerk has asked to send to the packing board
-// without a deposit. Deciding happens on the Sales ticket itself (Review
-// Release Request), where the order and customer context already live — this
-// page is the list of what's waiting, plus recent decisions.
+// without a deposit: either released on account (credit terms) or paid in
+// full before collection (8.69). Open to tickets.release_on_account and
+// tickets.finance_confirm holders; Finance can approve pay before
+// collection, only release permission can release on account. Deciding
+// happens on the Sales ticket itself (Review No-Deposit Request), where the
+// order and customer context already live — this page is the list of what's
+// waiting, plus recent decisions.
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
@@ -11,12 +15,14 @@ import { TopBar, DataTable, FilterPill, ChipRow, Badge, fmtR, fmtDate, fmtDateTi
 
 const STATUS_LABEL = {
   pending: "Waiting", released: "Released on terms", exception: "One-off release",
+  pay_before_collection: "Pay before collection",
   declined: "Declined", withdrawn: "Withdrawn", deposit_registered: "Deposit registered",
 };
 const STATUS_COLOR = {
-  pending: "amber", released: "green", exception: "teal",
+  pending: "amber", released: "green", exception: "teal", pay_before_collection: "indigo",
   declined: "red", withdrawn: "gray", deposit_registered: "blue",
 };
+const KIND_LABEL = { on_account: "Release on account", pay_before_collection: "Pay before collection" };
 
 export default function ReleaseRequests() {
   const navigate = useNavigate();
@@ -44,15 +50,16 @@ export default function ReleaseRequests() {
   return (
     <div className="flex flex-col h-full">
       <TopBar
-        title="Release Requests"
+        title="Deposit Requests"
         subtitle={`${waiting} waiting for a decision`}
         onRefresh={load}
       />
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="w-full space-y-4">
           <p className="text-sm text-gray-500">
-            Orders a sales clerk has asked to release without a deposit because the customer has a payment agreement.
-            Open one to approve account terms and release it, release that order only, or decline.
+            Orders a sales clerk has asked to send for packing without a deposit. Open one to decide: approve pay before
+            collection (the customer pays in full before collecting), release it on account terms, release that order only,
+            or decline and ask for a deposit.
           </p>
           <ChipRow>
             <FilterPill label="Waiting" active={filter === "pending"} onClick={() => setFilter("pending")} />
@@ -75,6 +82,10 @@ export default function ReleaseRequests() {
                       <p className="font-medium text-gray-900">{r.customer_name}</p>
                       <p className="text-[10px] font-mono text-gray-400">{r.order_name || "—"} · {r.ref}</p>
                     </div>
+                  ) },
+                { accessorKey: "kind", header: "Asked for",
+                  cell: ({ row: { original: r } }) => (
+                    <Badge color={r.kind === "pay_before_collection" ? "indigo" : "teal"}>{KIND_LABEL[r.kind] || "Release on account"}</Badge>
                   ) },
                 { accessorKey: "order_total", header: "Order total",
                   cell: ({ row: { original: r } }) => <span className="font-semibold">{fmtR(r.order_total || 0)}</span> },

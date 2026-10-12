@@ -481,7 +481,9 @@ The table below documents every automated email the portal sends, when it fires,
 | **Commission Dispute Resolved** | An admin resolves a commission dispute | The reseller |
 | **Packing Started** | An orders clerk marks a reseller order as packing | The reseller who placed the order + Order CC list (if configured) |
 | **Ready for Collection** | An order passes both QA and RP approval on the packing board | All `warehouse_supervisor` portal users + any extra addresses in the Order Ready list |
-| **Order Ready for Collection** (reseller) | Same mark-complete event on a full-delivery reseller order | The reseller who placed the order + Order CC list (if configured) |
+| **Order Ready for Collection** (reseller) | Same mark-complete event on a full-delivery reseller order, or, if money is still owing, the moment it's paid | The reseller who placed the order + Order CC list (if configured) |
+| **Order Packed, Waiting on Payment** | Mark Complete on a deposit or pay-before-collection order that still has money owing | Finance: Payments list |
+| **No Deposit, Pay Before Collection** | Finance approves an order to pay before collection | The customer (main email + other contacts) |
 | **Daily Digest: Production Orders (MOs)** | Automatic, every day at 17:00, if at least one Manufacturing Order is still in progress | Addresses configured in Settings > Email Notifications > "Daily Digest: Production Orders (MOs)" |
 
 **Notes:**
@@ -545,7 +547,7 @@ MongoDB is your portal's primary database — it stores reseller profiles, commi
 Every order in Bassani Health — whether placed by a reseller online or brought in by Merveille from a customer email — flows through the same pipeline:
 
 ```
-INQUIRY → QUOTE → SALE ORDER → AWAITING DEPOSIT → CONFIRMED WIP → PACKING → QA + RP APPROVAL → COMPLETE
+INQUIRY → QUOTE → SALE ORDER → AWAITING DEPOSIT → CONFIRMED WIP → PACKING → QA + RP APPROVAL → AWAITING PAYMENT → READY FOR COLLECTION → COMPLETE
 ```
 
 Each step is handled by a different team member, and the portal enforces that no step is skipped. Here is how real orders move through the system:
@@ -561,16 +563,18 @@ Each step is handled by a different team member, and the portal enforces that no
 7. The warehouse packs the order — the packer ticks items on their handheld
 8. When packing is done, Tshidi marks it Ready
 9. Cullen approves from a QA perspective; Rookshanna approves from an RP perspective
-10. Tshidi marks it Complete — the (remaining balance) invoice is created in Odoo automatically and the ticket advances to Ready for Collection
-11. Finance sees the invoice on the ticket and registers the balance payment when it arrives — no Odoo needed
-12. Customer collects their order — Tshidi marks it Collected — Merveille's Sales Ticket automatically updates to Complete
+10. Tshidi marks it Complete — the (remaining balance) invoice is created in Odoo automatically and emailed to the pharmacy, saying the order is packed and will be released once paid. The ticket moves to **Awaiting Payment**
+11. Finance registers the balance payment when it arrives — no Odoo needed. The pharmacy is then emailed automatically that the order is ready to collect, and the ticket moves to **Ready for Collection**
+12. Customer collects their order — Tshidi marks it Collected (the portal won't allow this while anything is owing) — Merveille's Sales Ticket automatically updates to Complete
 
 **Example: A reseller places an order online.**
 
 1. Reseller logs in, browses the catalogue, and places an order — a Sales Ticket is created automatically
 2. The ticket is unassigned — Merveille sees it in her queue and claims it
 3. She confirms the order from the ticket — the customer gets the pro-forma invoice email automatically and the ticket sits at Awaiting Deposit
-4. The rest of the flow is identical: Finance registers the deposit (queues packing) → packing → QA/RP → Mark Complete (balance invoice created) → Finance confirms balance payment → customer collects
+4. The rest of the flow is identical: Finance registers the deposit (queues packing) → packing → QA/RP → Mark Complete (balance invoice created) → Finance registers the balance payment (customer told it's ready) → customer collects
+
+**Three ways past the deposit stage.** Every order needs one of: a **50% deposit** registered by Finance; **release on account** for a customer with a credit agreement (see Account Terms); or **pay before collection**, approved by Finance, where we pack with no deposit and the customer pays the full amount before collecting (see Pay Before Collection). Sales staff who can't approve these themselves click **Request No Deposit** on the ticket.
 
 **Recurring orders:** If a customer orders the same thing on a regular schedule, Merveille (or the reseller) can click **Make Recurring** on a ticket that already has a quote built, and set how often it repeats (weekly, every 2 weeks, or monthly). Two days before each repeat date, the portal automatically emails the customer a link showing what's about to be ordered — the customer can accept or decline it themselves, no login needed. Accepting confirms the order automatically in Odoo (same as Merveille clicking Confirm Order); Finance still has to register the deposit before it moves to packing, exactly like any other order. If the customer doesn't respond in time, that one order is simply skipped and the schedule carries on to the next date — nothing breaks and nobody needs to intervene. Staff can see and manage all recurring schedules under **Orders > Recurring Orders**.
 
@@ -714,7 +718,7 @@ If the customer is not interested:
 
 ### What Happens After Confirmation
 
-Once an order is confirmed, it sits at `Awaiting Deposit` until Finance registers the 50% deposit, or, for a customer approved for account terms, until someone authorised releases it on account (see **Account Terms** under the Finance Team section). Once that's done, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then later `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
+Once an order is confirmed, it sits at `Awaiting Deposit` until Finance registers the 50% deposit, or, for a customer approved for account terms, until someone authorised releases it on account (see **Account Terms** under the Finance Team section). Once that's done, it moves to the Orders team (Tshidi). You will see the ticket status change to `Confirmed WIP`, then `Awaiting Payment` if money is still owing once it's packed, then `Ready for Collection`, then `Complete` — all automatically, without you doing anything. If there is a problem with packing, the ticket will show `Incomplete` with a reason from Tshidi.
 
 ### Recurring Orders
 
@@ -1041,8 +1045,8 @@ This covers the most common path: a reseller sends onboarding documents to a cus
 
 Finance is involved at **two** points in the order pipeline:
 
-1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit, or the order is released on account for an approved account customer (see **Account Terms and Release on Account** below).
-2. **Ready for Collection** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo, and you register the balance payment once the customer pays.
+1. **Awaiting Deposit** — immediately after a Sales or Orders Clerk confirms an order. The customer has already been emailed a pro-forma invoice automatically. Nothing moves onto the packing board until you register the 50% deposit, the order is released on account for an approved account customer (see **Account Terms and Release on Account** below), or you approve it to **pay before collection** (see **Pay Before Collection** below).
+2. **Awaiting Payment** — after the order has been packed and approved by QA and RP. When the Orders Clerk marks an order Complete, the system automatically creates and posts the (remaining balance) invoice in Odoo. If anything is still owing on a deposit or pay-before-collection order, the customer is **not** told it's ready yet: the ticket shows **Awaiting Payment**, you're emailed, and the order appears on **Finance > Expected Payments**. As soon as the payment is recorded, the customer is emailed automatically that their order is ready to collect. Orders released on account are not held: the customer collects and pays per their terms.
 
 ### Statements and Customer Accounts
 
@@ -1100,41 +1104,72 @@ The order goes straight onto the packing board with no deposit. When it's marked
 
 An order can't be released if the customer isn't approved for the order's company, the terms are suspended or past their review date, Odoo has no credit terms or credit limit for them, or this order would take them over their credit limit. Over the limit is always a hard stop: register a deposit instead, or have the credit limit reviewed first. Overdue invoices show as a warning but don't block.
 
-**When Finance hasn't set up terms yet: Request Release on Account** *(anyone working the order, including resellers for their own customers)*
+**When you can't approve it yourself: Request No Deposit** *(anyone working the order, including resellers for their own customers)*
 
-If you know a customer has a payment agreement but they have no account terms in the portal yet, don't register a token deposit (such as R1). Instead:
+If an order shouldn't need a deposit, don't register a token deposit (such as R1). Instead:
 
-1. Open the Sales Ticket at **Awaiting Deposit**. The Next Step says it's waiting for the customer's deposit; click **Request Release on Account** underneath it
-2. Explain why the order shouldn't need a deposit (e.g. "30-day agreement with the owner, confirmed by Dean") and click **Send to Finance**
-3. The ticket shows "Release on account requested" and Finance is emailed. You'll get an email when they decide. You can withdraw the request while it's waiting
+1. Open the Sales Ticket at **Awaiting Deposit**. The Next Step says it's waiting for the customer's deposit; click **Request No Deposit** underneath it
+2. Choose what you're asking for: **Pay before collection** (we pack now and the customer pays in full before collecting) or **Release on account** (the customer has a credit agreement and pays later, per their terms)
+3. Explain why (e.g. "Regular customer, pays by EFT before collecting" or "30-day agreement with the owner, confirmed by Dean") and click **Send to Finance**
+4. The ticket shows the request and Finance is emailed. You'll get an email when they decide. You can withdraw the request while it's waiting
 
-**Who should hold these permissions:** only Finance's credit controllers: **Register deposits**, **Release orders on account (no deposit)** and **Approve & suspend customer account terms**. Everyone else asks.
+**Who should hold these permissions:** **Register deposits** belongs to Finance; it also lets them approve pay before collection. **Release orders on account (no deposit)** and **Approve & suspend customer account terms** belong to Finance's credit controllers only. Everyone else asks.
 
-**Deciding a request** *(requires the "Release orders on account (no deposit)" permission; you can't decide your own request)*
+**Deciding a request** *(you can't decide your own request)*
 
-Waiting requests are listed under **Orders > Release Requests**. Open one (or the ticket itself) and click **Review Release Request**. Choose one:
-- **Approve account terms and release** (or **Release on the customer's account terms** if they're already approved): fill in the same account terms form as on the customer profile (needs the account terms permission). The terms are saved for the customer and the order is released. Future orders for this customer won't need a request
-- **Release this order only**: a one-off without standing terms. Give a reason, and optionally choose payment terms for this order so the invoice gets a due date. It's recorded on the ticket as a one-off release and in the audit trail
-- **Decline**: give a reason. It's emailed to the person who asked, and the order still needs a deposit
+Waiting requests are listed under **Orders > Deposit Requests**, with a column showing what was asked for. Open one (or the ticket itself) and click **Review No-Deposit Request**. Choose one:
+- **Pay before collection** *(Register deposits or release permission)*: the order goes to packing with no deposit; the customer pays in full before collecting. See **Pay Before Collection** below
+- **Approve account terms and release** (or **Release on the customer's account terms** if they're already approved) *(release permission)*: fill in the same account terms form as on the customer profile (needs the account terms permission). The terms are saved for the customer and the order is released. Future orders for this customer won't need a request
+- **Release this order only** *(release permission)*: a one-off without standing terms. Give a reason, and optionally choose payment terms for this order so the invoice gets a due date. It's recorded on the ticket as a one-off release and in the audit trail
+- **Decline**: give a reason. It's emailed to the person who asked, and the order still needs a deposit. Finance can decline a pay-before-collection request; declining a release-on-account request needs the release permission
 
 Either release sends the order to the packing board with no deposit invoice. The full invoice is created unpaid at Mark Complete.
 
 If you hold the release permission yourself, you don't need a request: click **Release on Account** on the ticket. For a customer without account terms it offers the same two release options.
 
-**Small deposits:** if you register a deposit under 10% of the order total, the window warns you and asks for a reason. Token deposits create extra invoices; use Request Release on Account for customers with payment agreements.
+**Small deposits:** if you register a deposit under 10% of the order total, the window warns you and asks for a reason. Token deposits create extra invoices; use pay before collection, or Request No Deposit, instead.
 
 **If an account customer should pay a deposit on this order after all,** choose **Register Deposit** as normal. Because they were told no deposit was needed, the window offers **Send Deposit Pro-Forma** so they receive the deposit-due email first.
 
+### Pay Before Collection (2026-10-12)
+
+For a customer who won't pay a deposit but will pay the full amount before collecting (for example by EFT once the order is ready). There's no credit risk: we pack and sign off as normal, but the customer is only told the order is ready once it's paid in full, and the portal won't let the goods be marked collected while anything is owing.
+
+**Approving it** *(requires the "Register deposits" permission)*
+
+1. Open the Sales Ticket at **Awaiting Deposit** and click **Pay Before Collection** (in the Next Step under Register Deposit, or under Payment in Actions)
+2. The window shows the order total, warns you if the customer has overdue invoices elsewhere, and tells you if the order's payment terms will change to immediate payment (so the invoice is due on issue, not in 30 days)
+3. Enter a **reason** and click **Approve and Queue for Packing**
+
+The order goes straight to the packing board. The customer is emailed that no deposit is needed, with the full amount, our banking details and the sales order number to use as their payment reference. The ticket shows a **Pay before collection** panel and a badge on the Sales Tickets list.
+
+**If the customer pays before the order is invoiced:** click **Record Payment** on the ticket (or on Expected Payments). It records the payment as a paid advance invoice, which is deducted from the final invoice when the order is marked complete. If they paid in full, they're told the order is ready as soon as it's signed off.
+
+**Once it's packed:** Mark Complete raises the invoice and emails it to the customer, saying the order is packed and will be released once paid. The ticket shows **Awaiting Payment** until you record the payment, then the customer is emailed that it's ready to collect.
+
+### Expected Payments (2026-10-12)
+
+**Finance > Expected Payments** lists every payment to look out for: orders approved to pay before collection that aren't paid in full yet, and deposit orders packed and waiting on their balance.
+
+- **Packed & waiting** (default): the customer is waiting to hear their order is ready. Work these first. **Waiting** shows how many days it's been; 3 days shows At Risk, 7 shows Overdue
+- **Not packed yet**: approved orders still being packed or signed off
+- **Paid today**: orders released today, so you can confirm your payments landed and the customer was told
+- **All outstanding**: everything owing
+
+Search by customer, sales order number, invoice number or amount, which is useful when matching a bank line. Customers use the **sales order number** as their payment reference. **Proof of payment** shows when the customer has uploaded one, so check the bank. Click **Record Payment** to record it without leaving the page (it pays the open invoice, or records an advance payment if the order isn't invoiced yet). Click a row to open its Sales ticket. **Export** downloads the list to Excel.
+
+You don't need to use this page for the customer to be told: a payment recorded anywhere (the Sales ticket, the Invoices page, Bank Reconciliation, or straight in Odoo, picked up within 15 minutes or when the ticket is opened) releases the order automatically. You're emailed when an order goes on hold, and each morning at 08:00 with any packed order still unpaid after 3 days (Settings > Email Notifications > Finance: Payments).
+
 ### Registering the Balance Payment
 
-1. Open the Sales Ticket (it will be in **Ready for Collection** status)
+1. Open the Sales Ticket (it will be in **Awaiting Payment** status once packed, or earlier if the customer pays before the order is complete)
 2. Click **Register Balance Payment** in the right sidebar
 3. The outstanding balance is pre-filled from the live Odoo invoice — verify the amount
 4. Select the payment journal (which bank account the funds arrived in)
 5. Select the payment date
 6. Click **Register Payment in Odoo**
 
-The payment is applied to the invoice in Odoo immediately. The ticket records who registered it and when.
+The payment is applied to the invoice in Odoo immediately. The ticket records who registered it and when. If the order was waiting on this payment, the customer is emailed straight away that it's ready to collect, and the ticket moves to **Ready for Collection**.
 
 ### Confirming Payment Received
 
@@ -1244,7 +1279,8 @@ Row 2 — live pipeline breakdown:
 | Packing | Confirmed orders being packed (queued + in packing) |
 | QA Review | Orders packed and awaiting QA sign-off |
 | RP Review | QA approved — awaiting RP sign-off |
-| Ready to Collect | Invoice raised — customer has not yet collected |
+| Awaiting Payment | Packed and signed off, but not paid yet — the customer hasn't been told it's ready |
+| Ready to Collect | Customer told it's ready — not yet collected |
 
 Within each column, orders are sorted **oldest first** (most urgent at top).
 
@@ -1393,7 +1429,9 @@ Once both QA Manager and Responsible Pharmacist have approved:
 1. The **Mark Complete** button becomes available
 2. Click it to close the order
 
-If the order ships in full, the Sales Ticket automatically updates to `Complete` and a ready-for-collection email goes to the warehouse supervisors.
+If the order ships in full, a ready-for-collection email goes to the warehouse supervisors so it can be staged.
+
+**Packed, Awaiting Payment.** If the customer still owes money (a deposit order's balance, or a pay-before-collection order), the order shows **Packed, Awaiting Payment** instead of Ready for Collection, and the customer isn't told yet. The Next Step says how much is owing. Nothing for you to do: once Finance records the payment, the customer is emailed automatically and the order shows **Ready for Collection**, with "Customer told it's ready" on the **Payment** card. The Payment card always shows how the order is being paid, its invoice, and whether it's paid. A **Pay Before Collection** tag on the Orders Tickets list marks these orders from the moment they're queued, and **Packed, Awaiting Payment** is its own filter.
 
 **Partial Fulfilment (Backorders)**
 When a confirmed order cannot be fully filled from current stock, the system handles the split automatically:
@@ -1403,10 +1441,11 @@ When a confirmed order cannot be fully filled from current stock, the system han
 3. The reseller receives an email listing what is shipping now and what is on backorder
 
 **Marking a delivery as collected**
-For orders where the invoice is created on collection (partial orders), an additional step appears:
-1. When the customer collects the delivery, open the order ticket at `Complete` stage
-2. Click **Mark as Collected** — this creates the Odoo invoice for the quantities delivered and records the collection timestamp
+1. When the customer collects the delivery, open the order ticket at **Ready for Collection**
+2. Click **Mark as Collected** — this records the collection timestamp
 3. When all deliveries for an order (including backorders) have been collected, the Sales Ticket advances to `Complete`
+
+Goods never leave unpaid: for a deposit or pay-before-collection order, Mark as Collected is refused while the invoice has anything owing, and tells you how much. Orders released on account and sample orders aren't affected.
 
 **Checking backorder stock availability**
 When backorder entries are on the board:

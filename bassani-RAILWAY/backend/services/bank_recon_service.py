@@ -21,21 +21,35 @@ async def check_invoice_payments() -> dict:
     """
     Batch-checks Odoo payment_state for all open tickets with a linked invoice.
     Auto-confirms any where Odoo shows paid or in_payment.
-    Returns {checked: int, confirmed: int}.
+    Returns {checked: int, confirmed: int, released: int}.
+
+    8.69 — also releases any packed order whose "ready for collection"
+    notice is held for payment and whose invoice is now paid, so a payment
+    entered directly in the accounting system still reaches the customer.
     """
+    released = 0
+    try:
+        from routes.packing_board_routes import release_collection_holds
+        released = len(await release_collection_holds())
+    except Exception as exc:
+        logger.warning("auto_release_collection_holds_failed", extra={"error": str(exc)})
+
     tickets = await col("tickets").find({
         "status": {"$in": ["invoice", "confirmed_wip", "sale_order"]},
         "payment_confirmed_at": None,
         "invoice_id": {"$exists": True, "$ne": None},
         "exit_status": {"$in": [None, ""]},
+        # A pay-before-collection order has no deposit; its payments are
+        # handled by the release above, never stamped as a deposit here.
+        "payment_arrangement": {"$ne": "pay_before_collection"},
     }).to_list(length=None)
 
     if not tickets:
-        return {"checked": 0, "confirmed": 0}
+        return {"checked": 0, "confirmed": 0, "released": released}
 
     valid_tickets = [t for t in tickets if isinstance(t.get("invoice_id"), int)]
     if not valid_tickets:
-        return {"checked": len(tickets), "confirmed": 0}
+        return {"checked": len(tickets), "confirmed": 0, "released": released}
 
     invoice_ids = list({t["invoice_id"] for t in valid_tickets})
 
@@ -48,7 +62,7 @@ async def check_invoice_payments() -> dict:
         )
     except Exception as exc:
         logger.warning("auto_payment_check_odoo_failed", extra={"error": str(exc)})
-        return {"checked": len(valid_tickets), "confirmed": 0}
+        return {"checked": len(valid_tickets), "confirmed": 0, "released": released}
 
     invoice_map = {inv["id"]: inv for inv in invoice_records}
 
@@ -117,4 +131,4 @@ async def check_invoice_payments() -> dict:
         except Exception as exc:
             logger.warning("auto_payment_email_failed", extra={"error": str(exc)})
 
-    return {"checked": len(valid_tickets), "confirmed": len(confirmed_items)}
+    return {"checked": len(valid_tickets), "confirmed": len(confirmed_items), "released": released}

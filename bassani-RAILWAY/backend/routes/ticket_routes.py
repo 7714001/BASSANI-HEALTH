@@ -18,7 +18,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from typing import Optional, List
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from config import get_settings
 from auth import (
@@ -27,7 +27,10 @@ from auth import (
 )
 from routes.monitor_routes import broadcast_monitor_refresh
 from routes.order_routes import _queue_packing_board, _send_order_confirmation_email
-from routes.packing_board_routes import push_update as _push_packing_board_update
+from routes.packing_board_routes import (
+    push_update as _push_packing_board_update, release_collection_holds,
+    payment_required_before_collection,
+)
 from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from warehouse_context import company_context
 from database import col
@@ -42,7 +45,10 @@ from routes.settings_routes import get_email_routing
 from support_links import order_help_url
 from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by, get_owning_reseller_id
-from account_terms import evaluate_release, commercial_partner_id, get_account_terms, payment_terms_catalog
+from account_terms import (
+    evaluate_release, commercial_partner_id, get_account_terms, payment_terms_catalog,
+    is_credit_term, read_company_credit,
+)
 from portal_sales_agent import sync_portal_sales_agent
 from discount_requests import cancel_pending_request
 from services.age_tier import ticket_age_fields
@@ -172,7 +178,11 @@ async def ticket_websocket(ws: WebSocket):
 
 
 # Forward stages — a ticket normally moves left to right through these.
-STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "ready_for_collection", "incomplete"]
+# awaiting_payment (8.69): packed and signed off, but the customer is only
+# told it is ready once the final invoice is paid (deposit balance, or a
+# pay-before-collection order).
+STATUSES = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip", "awaiting_payment",
+            "ready_for_collection", "incomplete"]
 
 # Side-exits — reachable from most stages, not a fixed final step (mirrors how
 # Odoo's own sale.order can cancel from draft, sent, *or* sale).
@@ -351,8 +361,62 @@ def _deposit_gate_cleared(ticket: dict) -> bool:
     return bool(
         ticket.get("payment_confirmed_at")
         or ticket.get("released_on_account_at")
+        or ticket.get("pbc_approved_at")      # 8.69 — pay before collection
         or ticket.get("is_sample")
     )
+
+
+def _order_invoices(odoo, invoice_ids: list) -> list:
+    """Posted customer invoices on an order (cancelled and draft ignored)."""
+    if not invoice_ids:
+        return []
+    rows = odoo.read(
+        "account.move", list(invoice_ids),
+        fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type", "state",
+                "invoice_date", "invoice_date_due"],
+    )
+    return [r for r in rows if r.get("move_type") == "out_invoice" and r.get("state") == "posted"]
+
+
+def _paid_on_invoices(invoices: list) -> float:
+    """Money received across an order's posted invoices. A final invoice
+    already nets off any down payment (live-checked on Odoo 19: it carries a
+    negative "Down Payment" line), so summing what's been paid on each posted
+    invoice never counts a deposit twice."""
+    return round(sum(float(i.get("amount_total") or 0) - float(i.get("amount_residual") or 0) for i in invoices), 2)
+
+
+def _order_amount_owing(odoo, order_id: int, order_total: float) -> float:
+    """What is still owing on an order: its total less every payment received
+    on its posted invoices (deposits, advance payments, final invoices)."""
+    try:
+        rows = odoo.read("sale.order", [order_id], fields=["invoice_ids"])
+        invoices = _order_invoices(odoo, rows[0].get("invoice_ids", []) if rows else [])
+    except Exception:
+        invoices = []
+    return max(round(order_total - _paid_on_invoices(invoices), 2), 0.0)
+
+
+async def _resolve_balance_invoice(odoo, order_id: int, invoice_ids: list) -> Optional[dict]:
+    """The invoice a balance payment should go against (8.69 fix). Previously
+    "the customer invoice with the largest total", which picks the wrong one
+    when a deposit is 50% or more (a 50/50 order has two equal invoices, live-
+    checked on S00907) and never excluded cancelled invoices. Now: the oldest
+    unpaid posted invoice linked to one of this order's deliveries, else the
+    unpaid posted invoice with the most owing. None when nothing is owing."""
+    invoices = _order_invoices(odoo, invoice_ids)
+    open_invoices = [i for i in invoices if float(i.get("amount_residual") or 0) > 0.005]
+    if not open_invoices:
+        return None
+    linked = set()
+    async for e in col("packing_board").find(
+        {"order_id": str(order_id), "invoice_id": {"$nin": [None, False]}}, {"invoice_id": 1},
+    ):
+        linked.add(int(e["invoice_id"]))
+    delivery_invoices = sorted((i for i in open_invoices if i["id"] in linked), key=lambda i: i["id"])
+    if delivery_invoices:
+        return delivery_invoices[0]
+    return max(open_invoices, key=lambda i: float(i.get("amount_residual") or 0))
 
 
 async def _compute_override_gaps(ticket: dict) -> list:
@@ -368,7 +432,7 @@ async def _compute_override_gaps(ticket: dict) -> list:
     backed by real data. Balance-payment status is deliberately left to the
     frontend, which already has live invoice/payment data
     (detailOutstanding) without a redundant Odoo read here."""
-    claims_wip = ticket.get("status") in ("confirmed_wip", "ready_for_collection") or ticket.get("exit_status") == "complete"
+    claims_wip = ticket.get("status") in ("confirmed_wip", "awaiting_payment", "ready_for_collection") or ticket.get("exit_status") == "complete"
     if not claims_wip:
         return []
     order_id = ticket.get("order_id")
@@ -378,7 +442,7 @@ async def _compute_override_gaps(ticket: dict) -> list:
         packing = await col("packing_board").find_one({"order_id": str(order_id)})
     except Exception:
         return []
-    claims_done = ticket.get("status") == "ready_for_collection" or ticket.get("exit_status") == "complete"
+    claims_done = ticket.get("status") in ("awaiting_payment", "ready_for_collection") or ticket.get("exit_status") == "complete"
     if not packing:
         gaps = ["packing_entry"]
         if claims_done:
@@ -848,10 +912,179 @@ def list_payment_terms(current_user: dict = Depends(require_admin)):
     return {"payment_terms": terms}
 
 
+@router.get("/expected-payments")
+async def list_expected_payments(
+    view: str = "waiting",
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """8.69 — Finance's list of payments to look out for: every pay-before-
+    collection order not yet paid in full, and every deposit order packed and
+    waiting on its balance. One row per order. Amounts are read live from
+    Odoo (order total less everything paid on its posted invoices), so the
+    figure always matches the accounting system.
+
+    view: waiting (packed, customer waiting to hear: the urgent ones),
+    not_packed (approved, still being packed or signed off), all, or
+    paid_today (released today, to confirm the day's work landed).
+    Literal route, so it must stay registered before GET /{ticket_id}."""
+    now = datetime.now(timezone.utc)
+    sast_today_start = (now + timedelta(hours=2)).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=2)
+
+    if view == "paid_today":
+        released = await col("packing_board").find(
+            {"collection_released_at": {"$gte": sast_today_start}}, {"order_id": 1},
+        ).to_list(500)
+        ticket_query = {"type": "sales", "order_id": {"$in": [int(e["order_id"]) for e in released
+                                                               if str(e.get("order_id", "")).isdigit()]}}
+        tickets = await col("tickets").find(ticket_query).to_list(500)
+    else:
+        tickets = await col("tickets").find({
+            "type": "sales", "exit_status": None, "order_id": {"$ne": None},
+            "$or": [{"payment_arrangement": "pay_before_collection"}, {"status": "awaiting_payment"}],
+        }).to_list(1000)
+        # Deposit orders completed before 8.69 that still owe a balance (no
+        # payment_hold field): the same list, so nothing is missed.
+        legacy = await col("packing_board").find(
+            {"status": "complete", "collected_at": None, "payment_hold": {"$exists": False}}, {"order_id": 1},
+        ).to_list(1000)
+        known = {t["order_id"] for t in tickets}
+        legacy_ids = [int(e["order_id"]) for e in legacy
+                      if str(e.get("order_id", "")).isdigit() and int(e["order_id"]) not in known]
+        if legacy_ids:
+            extra = await col("tickets").find({"type": "sales", "exit_status": None, "order_id": {"$in": legacy_ids}}).to_list(1000)
+            tickets += [t for t in extra if payment_required_before_collection(t)]
+
+    if not tickets:
+        return {"rows": [], "counts": {"waiting": 0, "not_packed": 0}, "total_due": 0}
+
+    order_ids = list({t["order_id"] for t in tickets})
+    entries_by_order: dict = {}
+    async for e in col("packing_board").find(
+        {"order_id": {"$in": [str(i) for i in order_ids]}, "status": {"$ne": "cleared"}},
+        {"_id": 0, "order_id": 1, "status": 1, "invoice_id": 1, "inv_num": 1, "payment_hold": 1,
+         "payment_hold_at": 1, "completed_at": 1, "collection_released_at": 1, "customer_notified_at": 1,
+         "collected_at": 1, "is_backorder": 1, "waiting_stock": 1},
+    ):
+        entries_by_order.setdefault(int(e["order_id"]), []).append(e)
+
+    odoo = get_odoo_client()
+    try:
+        orders = {o["id"]: o for o in odoo.search_read(
+            "sale.order", [("id", "in", order_ids)],
+            fields=["id", "name", "amount_total", "invoice_ids", "state"], limit=len(order_ids),
+        )}
+        all_inv_ids = list({i for o in orders.values() for i in (o.get("invoice_ids") or [])})
+        invoices = {i["id"]: i for i in _order_invoices(odoo, all_inv_ids)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    rows = []
+    for t in tickets:
+        order = orders.get(t["order_id"])
+        if not order or order.get("state") == "cancel":
+            continue
+        order_invoices = [invoices[i] for i in (order.get("invoice_ids") or []) if i in invoices]
+        total = float(order.get("amount_total") or 0)
+        paid = _paid_on_invoices(order_invoices)
+        due = max(round(total - paid, 2), 0.0)
+        entries = entries_by_order.get(t["order_id"], [])
+        linked = {int(e["invoice_id"]) for e in entries if e.get("invoice_id")}
+        open_invoices = [i for i in order_invoices if float(i.get("amount_residual") or 0) > 0.005]
+        open_inv = (sorted((i for i in open_invoices if i["id"] in linked), key=lambda i: i["id"]) or
+                    sorted(open_invoices, key=lambda i: -float(i.get("amount_residual") or 0)) or [None])[0]
+
+        held = [e for e in entries if e.get("payment_hold") and not e.get("collection_released_at")]
+        legacy_unpaid = [e for e in entries if e.get("status") == "complete" and "payment_hold" not in e
+                         and not e.get("collected_at") and e.get("invoice_id") in {i["id"] for i in open_invoices}]
+        released_today = [e for e in entries if e.get("collection_released_at")
+                          and e["collection_released_at"].replace(tzinfo=timezone.utc) >= sast_today_start]
+        statuses = {e.get("status") for e in entries}
+        if view == "paid_today":
+            if not released_today:
+                continue
+            stage, stage_label = "paid", "Paid, customer notified"
+        elif held:
+            stage, stage_label = "packed_waiting", "Packed, waiting on payment"
+        elif legacy_unpaid:
+            stage, stage_label = "packed_notified", "Packed, customer already told it's ready"
+        elif statuses & {"ready"}:
+            stage, stage_label = "signoff", "Packed, awaiting QA/RP"
+        elif statuses & {"queued", "packing", "waiting_stock"}:
+            stage, stage_label = "packing", "Being packed"
+        elif entries:
+            stage, stage_label = "in_progress", "In fulfilment"
+        else:
+            stage, stage_label = "approved", "Approved, not on the packing board yet"
+        if view != "paid_today" and due <= 0.005:
+            continue
+        waiting = stage in ("packed_waiting", "packed_notified")
+        if view == "waiting" and not waiting:
+            continue
+        if view == "not_packed" and waiting:
+            continue
+
+        since = None
+        if held:
+            since = min((e.get("payment_hold_at") or e.get("completed_at") for e in held if e.get("payment_hold_at") or e.get("completed_at")), default=None)
+        elif legacy_unpaid:
+            since = min((e.get("completed_at") for e in legacy_unpaid if e.get("completed_at")), default=None)
+        days = None
+        tier = None
+        if since:
+            days = int((now - since.replace(tzinfo=timezone.utc)).total_seconds() // 86400)
+            tier = "overdue" if days >= 7 else ("urgent" if days >= 3 else "ok")
+
+        arrangement = t.get("payment_arrangement") or "deposit"
+        has_final_invoice = bool(linked)
+        if open_inv:
+            pay_mode = "invoice"
+        elif arrangement == "pay_before_collection" and not has_final_invoice and due > 0.005:
+            pay_mode = "advance"
+        else:
+            pay_mode = None
+        rows.append({
+            "ticket_id": str(t["_id"]),
+            "ref": f"TKT-{str(t['_id'])[-8:].upper()}",
+            "customer_name": t.get("customer_name"),
+            "reseller_name": t.get("reseller_name"),
+            "assigned_to_name": t.get("assigned_to_name"),
+            "order_id": t["order_id"],
+            "order_name": order.get("name"),
+            "order_total": total,
+            "amount_paid": paid,
+            "amount_due": due,
+            "invoice_id": open_inv["id"] if open_inv else None,
+            "invoice_name": open_inv["name"] if open_inv else None,
+            "invoice_residual": float(open_inv["amount_residual"]) if open_inv else None,
+            "invoice_due_date": (open_inv or {}).get("invoice_date_due") or None,
+            "arrangement": arrangement,
+            "stage": stage,
+            "stage_label": stage_label,
+            "waiting_since": since,
+            "days_waiting": days,
+            "age_tier": tier,
+            "pop_awaiting_review": bool(t.get("pop_awaiting_review")),
+            "pop_count": len(t.get("pop_uploads") or []),
+            "pay_mode": pay_mode,
+            "customer_notified_at": max((e["customer_notified_at"] for e in entries if e.get("customer_notified_at")), default=None),
+        })
+
+    order_rank = {"packed_waiting": 0, "packed_notified": 1, "signoff": 2, "packing": 3, "in_progress": 4, "approved": 5, "paid": 6}
+    rows.sort(key=lambda r: (order_rank.get(r["stage"], 9), -(r["days_waiting"] or 0), r["customer_name"] or ""))
+    return {
+        "rows": rows,
+        "counts": {
+            "waiting": sum(1 for r in rows if r["stage"] in ("packed_waiting", "packed_notified")),
+            "not_packed": sum(1 for r in rows if r["stage"] not in ("packed_waiting", "packed_notified", "paid")),
+        },
+        "total_due": round(sum(r["amount_due"] for r in rows if r["stage"] != "paid"), 2),
+    }
+
+
 @router.get("/release-requests")
 async def list_release_requests(
     status: str = "pending",
-    current_user: dict = Depends(require_permission("tickets.release_on_account")),
+    current_user: dict = Depends(require_any_permission("tickets.release_on_account", "tickets.finance_confirm")),
 ):
     """8.71 — the Release Requests queue. `status=pending` (default) lists
     requests waiting for a decision on orders still at awaiting deposit;
@@ -887,6 +1120,7 @@ async def list_release_requests(
             "order_total": o.get("amount_total", rr.get("order_total")),
             "ticket_status": r.get("status"),
             "release_type": r.get("release_type"),
+            "kind": rr.get("kind") or "on_account",
             **{k: rr.get(k) for k in ("status", "reason", "requested_by_id", "requested_by_name", "requested_at",
                                       "decided_by_name", "decided_at", "decision_note")},
         })
@@ -1035,6 +1269,19 @@ async def get_ticket(
             ticket["reseller_name"] = _res["name"]
     if ticket.get("reseller_id") and ticket.get("source") == "portal":
         ticket["source"] = "reseller"
+
+    # 8.69 — opening a ticket that's waiting on payment re-checks Odoo, so a
+    # payment entered straight in Odoo releases it without waiting for the
+    # 15-minute poll.
+    if ticket.get("status") == "awaiting_payment" and ticket.get("order_id") and not ticket.get("exit_status"):
+        try:
+            if await release_collection_holds(order_id=ticket["order_id"]):
+                ticket["status"] = (await col("tickets").find_one({"_id": oid}, {"status": 1}) or {}).get("status", ticket["status"])
+                fresh = await col("tickets").find_one({"_id": oid}, {"stage_history": 1})
+                if fresh:
+                    ticket["stage_history"] = fresh.get("stage_history", ticket.get("stage_history"))
+        except Exception as e:
+            logger.warning("get_ticket_release_check_failed ticket_id=%s error=%s", ticket_id, e)
 
     # Admin Override reconciliation (2026-08-28) — see _compute_override_gaps'
     # own docstring. Detail-view only, not list_tickets, to avoid an extra
@@ -2224,15 +2471,29 @@ async def register_deposit(
         raise HTTPException(status_code=400, detail=f"Ticket is already closed as '{ticket['exit_status']}'")
     if not ticket.get("order_id"):
         raise HTTPException(status_code=400, detail="No linked order — build the quote first")
-    if ticket.get("status") != "awaiting_deposit":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ticket must be awaiting a deposit to register one (current stage: {ticket.get('status')})",
-        )
-    if ticket.get("payment_confirmed_at"):
-        raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
-    if ticket.get("released_on_account_at"):
-        raise HTTPException(status_code=400, detail="This order was already released on account — no deposit is needed")
+    # 8.69 — a pay-before-collection order is already on the packing board
+    # with no deposit. A payment received before its final invoice exists is
+    # recorded the same way as a deposit (a paid down-payment invoice, which
+    # Odoo deducts on the final invoice and which is VAT-correct, since SA
+    # time of supply is triggered by receiving payment). More than one is
+    # allowed. Once the final invoice exists, Register Payment pays that.
+    is_advance = ticket.get("payment_arrangement") == "pay_before_collection"
+    if is_advance:
+        if await col("packing_board").find_one({"order_id": str(ticket["order_id"]), "invoice_id": {"$nin": [None, False]}}):
+            raise HTTPException(
+                status_code=400,
+                detail="The final invoice has already been raised for this order. Record the payment against that invoice instead.",
+            )
+    else:
+        if ticket.get("status") != "awaiting_deposit":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ticket must be awaiting a deposit to register one (current stage: {ticket.get('status')})",
+            )
+        if ticket.get("payment_confirmed_at"):
+            raise HTTPException(status_code=400, detail="Deposit already registered on this ticket")
+        if ticket.get("released_on_account_at"):
+            raise HTTPException(status_code=400, detail="This order was already released on account — no deposit is needed")
 
     invoice_type = body.invoice_type or "fixed"
     if invoice_type not in ("fixed", "percentage"):
@@ -2268,11 +2529,20 @@ async def register_deposit(
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
 
-    # 8.71 — token deposit guard.
+    # 8.71 — token deposit guard. Doesn't apply to a payment towards a
+    # pay-before-collection order: any amount the customer actually paid is
+    # real money, not a way past the gate (the gate is already cleared).
     _order_total = float(_order_row.get("amount_total") or 0)
     _deposit_amount = body.amount if invoice_type == "fixed" else _order_total * (body.percentage or 0) / 100
     small_deposit_reason = (body.small_deposit_reason or "").strip() or None
-    is_small_deposit = _order_total > 0 and _deposit_amount < _order_total * TOKEN_DEPOSIT_PCT / 100
+    is_small_deposit = (not is_advance) and _order_total > 0 and _deposit_amount < _order_total * TOKEN_DEPOSIT_PCT / 100
+    if is_advance:
+        _owing = _order_amount_owing(odoo, order_id, _order_total)
+        if _deposit_amount > _owing + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"That is more than is owing on this order (R{_owing:,.2f}).",
+            )
     if is_small_deposit and not small_deposit_reason:
         raise HTTPException(
             status_code=400,
@@ -2416,6 +2686,33 @@ async def register_deposit(
 
     # Stamp ticket
     now = datetime.now(timezone.utc)
+    if is_advance:
+        # Pay before collection: a payment towards the full amount, not the
+        # deposit gate (already cleared). Recorded without touching
+        # payment_confirmed_at / invoice_id, which mean "deposit registered".
+        await col("tickets").update_one(
+            {"_id": oid},
+            {
+                "$set": {"last_payment_at": now, "updated_at": now, "pop_awaiting_review": False},
+                "$addToSet": {"deposit_invoice_ids": invoice_id},
+                "$push": {"stage_history": {
+                    "status": ticket["status"], "exit_status": None,
+                    "actor_id": current_user["id"], "actor_name": _actor(current_user),
+                    "at": now,
+                    "note": body.note or f"Payment received before invoicing: R{pay_amount:,.2f}",
+                }},
+            },
+        )
+        await audit_log(
+            "ticket.register_advance_payment", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id,
+                    "invoice_id": invoice_id, "date": body.date},
+        )
+        await broadcast_monitor_refresh()
+        await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+        return {"success": True, "invoice_id": invoice_id, "advance_payment": True}
+
     await col("tickets").update_one(
         {"_id": oid},
         {
@@ -2426,6 +2723,7 @@ async def register_deposit(
                 "updated_at": now,
                 "pop_awaiting_review": False,
             },
+            "$addToSet": {"deposit_invoice_ids": invoice_id},
             "$push": {"stage_history": {
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
@@ -2527,6 +2825,8 @@ def _release_stage_blocks(ticket: dict, order: dict) -> list:
         blocks.append("A deposit is already registered on this order.")
     if ticket.get("released_on_account_at"):
         blocks.append("This order was already released on account.")
+    if ticket.get("pbc_approved_at"):
+        blocks.append("This order was already approved to pay before collection.")
     if ticket.get("is_sample"):
         blocks.append("Sample orders don't need a deposit or a release.")
     if order.get("state") != "sale":
@@ -2843,12 +3143,47 @@ async def set_partial_decision(
 
 class ReleaseRequestBody(BaseModel):
     reason: str
+    # 8.69 — what's being asked for: "on_account" (release on account terms)
+    # or "pay_before_collection" (pack now, customer pays in full before
+    # collection). Defaults to on_account for older clients.
+    kind: Optional[str] = "on_account"
 
 
 class ReleaseDecisionBody(BaseModel):
-    decision: str                       # "release" | "exception" | "decline"
+    decision: str                       # "release" | "exception" | "pay_before_collection" | "decline"
     note: Optional[str] = ""
     payment_term_id: Optional[int] = None   # exception only: terms to set on this order
+
+
+class PayBeforeCollectionBody(BaseModel):
+    reason: str
+
+
+REQUEST_KINDS = ("on_account", "pay_before_collection")
+
+
+def _user_has(user: dict, permission: str) -> bool:
+    if user.get("is_super_admin") or user.get("role") == "super_admin":
+        return True
+    domain, action = permission.split(".", 1)
+    return bool((user.get("permissions") or {}).get(domain, {}).get(action))
+
+
+def _can_decide_request(user: dict, kind: str, decision: str) -> bool:
+    """Who may decide what (8.69). Release on account / one-off release stay
+    with tickets.release_on_account (credit controllers). Pay before
+    collection carries no credit risk (goods never leave unpaid), so anyone
+    who registers deposits (tickets.finance_confirm) can approve it. Declining
+    a request needs the authority to grant what was asked."""
+    can_release = _user_has(user, "tickets.release_on_account")
+    can_finance = _user_has(user, "tickets.finance_confirm")
+    if decision in ("release", "exception"):
+        return can_release
+    if decision == "pay_before_collection":
+        return can_release or can_finance
+    if decision == "decline":
+        return can_release or (kind == "pay_before_collection" and can_finance)
+    return False
 
 
 async def _close_release_request(oid, ticket: dict, outcome: str, current_user: dict, note: str = "",
@@ -2868,7 +3203,7 @@ async def _close_release_request(oid, ticket: dict, outcome: str, current_user: 
             "release_request.decision_note": note or None,
         }},
     )
-    if outcome in ("released", "exception") and rr.get("requested_by_email") and background_tasks:
+    if outcome in ("released", "exception", "pay_before_collection") and rr.get("requested_by_email") and background_tasks:
         order_ref = ticket.get("order_name") or f"#{ticket.get('order_id')}"
         background_tasks.add_task(
             send_release_decision_notification,
@@ -2891,6 +3226,9 @@ async def request_release_on_account(
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=400, detail="Tell Finance why this order shouldn't need a deposit")
+    kind = body.kind or "on_account"
+    if kind not in REQUEST_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown request type")
     role = current_user.get("role")
     if role not in (ADMIN_ROLES | TICKET_ROLES | {"super_admin", "reseller"}):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -2916,6 +3254,7 @@ async def request_release_on_account(
             current_user.get("username") if "@" in (current_user.get("username") or "") else None),
         "requested_at": now,
         "order_total": float(order.get("amount_total") or 0),
+        "kind": kind,
     }
     await col("tickets").update_one(
         {"_id": oid},
@@ -2923,17 +3262,18 @@ async def request_release_on_account(
          "$push": {"stage_history": {
              "status": ticket["status"], "exit_status": None,
              "actor_id": current_user["id"], "actor_name": actor_name, "at": now,
-             "note": f"Release on account requested: {reason}",
+             "note": (f"Pay before collection requested: {reason}" if kind == "pay_before_collection"
+                      else f"Release on account requested: {reason}"),
          }}},
     )
     await audit_log("ticket.release_requested", "ticket", ticket_id,
                     entity_label=ticket.get("customer_name", ""), user=current_user,
-                    detail={"reason": reason, "order_id": ticket["order_id"], "has_account_terms": bool(terms)})
+                    detail={"reason": reason, "kind": kind, "order_id": ticket["order_id"], "has_account_terms": bool(terms)})
     routing = await get_email_routing()
     background_tasks.add_task(
         send_release_request_notification,
         routing.get("release_request_to", []), ticket.get("customer_name", ""), order_ref,
-        float(order.get("amount_total") or 0), actor_name, reason, ticket_id, bool(terms),
+        float(order.get("amount_total") or 0), actor_name, reason, ticket_id, bool(terms), kind,
     )
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True}
@@ -2945,8 +3285,7 @@ async def withdraw_release_request(ticket_id: str, current_user: dict = Depends(
     rr = ticket.get("release_request") or {}
     if rr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="There is no pending release request")
-    perms = current_user.get("permissions") or {}
-    is_decider = current_user.get("role") == "super_admin" or perms.get("tickets", {}).get("release_on_account")
+    is_decider = _can_decide_request(current_user, rr.get("kind") or "on_account", "decline")
     if rr.get("requested_by_id") != current_user.get("id") and not is_decider:
         raise HTTPException(status_code=403, detail="Only the person who asked can withdraw this request")
     now = datetime.now(timezone.utc)
@@ -2957,7 +3296,7 @@ async def withdraw_release_request(ticket_id: str, current_user: dict = Depends(
          "$push": {"stage_history": {
              "status": ticket["status"], "exit_status": None,
              "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
-             "note": "Release on account request withdrawn",
+             "note": "No-deposit request withdrawn",
          }}},
     )
     await audit_log("ticket.release_request_withdrawn", "ticket", ticket_id,
@@ -2970,15 +3309,17 @@ async def decide_release_request(
     ticket_id: str,
     body: ReleaseDecisionBody,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(require_permission("tickets.release_on_account")),
+    current_user: dict = Depends(require_any_permission("tickets.release_on_account", "tickets.finance_confirm")),
 ):
     decision = body.decision
-    if decision not in ("release", "exception", "decline"):
+    if decision not in ("release", "exception", "pay_before_collection", "decline"):
         raise HTTPException(status_code=400, detail="Unknown decision")
     note = (body.note or "").strip()
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
     rr = ticket.get("release_request") or {}
     pending = rr.get("status") == "pending"
+    if not _can_decide_request(current_user, rr.get("kind") or "on_account", decision):
+        raise HTTPException(status_code=403, detail="You don't have permission to make this decision")
     # Without a pending request this is a direct release by someone who holds
     # the release permission themselves (e.g. Finance acting on their own
     # knowledge); there is nothing to decline in that case.
@@ -3002,7 +3343,7 @@ async def decide_release_request(
              "$push": {"stage_history": {
                  "status": ticket["status"], "exit_status": None,
                  "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
-                 "note": f"Release on account declined, deposit required: {note}",
+                 "note": f"No-deposit request declined, deposit required: {note}",
              }}},
         )
         await audit_log("ticket.release_request_declined", "ticket", ticket_id,
@@ -3022,6 +3363,15 @@ async def decide_release_request(
     if not partner_id:
         raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
     reason = note or rr.get("reason") or ""
+
+    if decision == "pay_before_collection":
+        if not reason:
+            raise HTTPException(status_code=400, detail="A reason is required")
+        return await _commit_pay_before_collection(
+            oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+            partner_id=partner_id, current_user=current_user, reason=reason, background_tasks=background_tasks,
+            request_reason=rr.get("reason"),
+        )
 
     if decision == "release":
         # Account-terms release: the full 8.68 check applies (terms approved
@@ -3055,6 +3405,173 @@ async def decide_release_request(
         audit_extra={"request_reason": rr.get("reason")},
     )
 
+
+# ── 8.69 — Pay before collection ─────────────────────────────────────────────
+# The third way through the deposit gate: Finance approves the order going to
+# the packing board with no deposit, on condition the customer pays the full
+# amount before collecting. Mark Complete then holds the customer's "ready"
+# email until the final invoice is paid (packing_board_routes.py's
+# hold_or_notify_after_complete / release_collection_holds), and Mark as
+# Collected refuses an unpaid order.
+
+async def _commit_pay_before_collection(
+    *, oid, ticket, ticket_id, odoo, order, company_id, partner_id, current_user, reason, background_tasks,
+    request_reason: Optional[str] = None,
+):
+    order_total = float(order.get("amount_total") or 0)
+    # The final invoice should fall due on issue, not on the customer's usual
+    # credit terms — this order is paid before collection by definition.
+    term_note = None
+    order_term = order.get("payment_term_id")
+    if order_term and is_credit_term(odoo, order_term[0]):
+        immediate = next((t for t in payment_terms_catalog(odoo) if not t["is_credit"]), None)
+        if immediate:
+            try:
+                odoo_call(
+                    "sale.order", "write",
+                    [[ticket["order_id"]], {"payment_term_id": immediate["id"]}],
+                    {"context": company_context(company_id)},
+                )
+                term_note = f"Order payment terms changed from {order_term[1]} to {immediate['name']}"
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not set payment terms on the order: {str(e)}")
+
+    overdue = 0.0
+    if partner_id:
+        try:
+            overdue = float(read_company_credit(odoo, partner_id, company_id).get("total_overdue") or 0)
+        except Exception:
+            overdue = 0.0
+
+    now = datetime.now(timezone.utc)
+    actor_name = _actor(current_user)
+    await col("tickets").update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "payment_arrangement": "pay_before_collection",
+                "pbc_approved_at": now,
+                "pbc_approved_by": current_user["id"],
+                "pbc_approved_by_name": actor_name,
+                "pbc_reason": reason,
+                "pbc_order_total": order_total,
+                "updated_at": now,
+            },
+            "$push": {"stage_history": {
+                "status": ticket["status"], "exit_status": None,
+                "actor_id": current_user["id"], "actor_name": actor_name, "at": now,
+                "note": f"Approved to pay before collection, no deposit: {reason}"
+                        + (f" ({term_note})" if term_note else ""),
+            }},
+        },
+    )
+    await _close_release_request(oid, ticket, "pay_before_collection", current_user, note=reason,
+                                 background_tasks=background_tasks)
+    await audit_log(
+        "ticket.pay_before_collection", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""), user=current_user,
+        before={"status": ticket["status"], "payment_arrangement": ticket.get("payment_arrangement")},
+        after={"payment_arrangement": "pay_before_collection"},
+        detail={"reason": reason, "request_reason": request_reason, "order_id": ticket["order_id"],
+                "order_total": order_total, "company_id": company_id, "term_note": term_note,
+                "total_overdue": overdue},
+    )
+
+    # Tell the customer no deposit is needed (they were sent the deposit
+    # pro-forma at confirm time). Non-fatal.
+    email_warning = None
+    partner = order.get("partner_id")
+    if partner:
+        owning = await get_owning_reseller_id(partner_id) if partner_id else None
+        email_warning = await _send_order_confirmation_email(
+            order_id=ticket["order_id"], partner=partner, order_ref=order.get("name") or f"#{ticket['order_id']}",
+            order_total=order_total, company_id=company_id, owning_reseller_id=owning,
+            background_tasks=background_tasks, pay_before_collection=True,
+        )
+
+    packing_board_warning = None
+    try:
+        await _queue_packing_board(ticket["order_id"], background_tasks)
+    except Exception as e:
+        packing_board_warning = str(e)
+        logger.warning("queue_packing_board_after_pbc_failed",
+                       extra={"ticket_id": ticket_id, "order_id": ticket["order_id"], "error": packing_board_warning})
+        await col("tickets").update_one(
+            {"_id": oid},
+            {"$set": {"packing_board_queue_error": packing_board_warning, "packing_board_queue_failed_at": now}},
+        )
+        await audit_log(
+            "ticket.packing_board_queue_failed", "ticket", ticket_id,
+            entity_label=ticket.get("customer_name", ""), user=current_user,
+            detail={"order_id": ticket["order_id"], "error": packing_board_warning},
+        )
+
+    await broadcast_monitor_refresh()
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    warnings = []
+    if overdue > 0:
+        warnings.append(f"This customer has R{overdue:,.2f} overdue on other invoices.")
+    if email_warning:
+        warnings.append(email_warning)
+    resp = {"success": True, "warnings": warnings}
+    if packing_board_warning:
+        resp["warning"] = (
+            f"Approved, but the order could not be queued for packing: {packing_board_warning}. "
+            "Use Admin Override once resolved to retry."
+        )
+    return resp
+
+
+@router.get("/{ticket_id}/pay-before-collection/check")
+async def check_pay_before_collection(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm", "tickets.release_on_account")),
+):
+    """Read-only context for the Pay Before Collection window: stage blocks,
+    order total, and any overdue amount on the customer's account (a warning,
+    never a block, since no credit is being extended)."""
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    overdue = 0.0
+    if partner_id:
+        try:
+            overdue = float(read_company_credit(odoo, partner_id, company_id).get("total_overdue") or 0)
+        except Exception:
+            overdue = 0.0
+    order_term = order.get("payment_term_id")
+    return {
+        "blocks": _release_stage_blocks(ticket, order),
+        "order_ref": order.get("name"),
+        "order_total": float(order.get("amount_total") or 0),
+        "total_overdue": overdue,
+        "order_payment_term": order_term[1] if order_term else None,
+        "term_will_change": bool(order_term and is_credit_term(odoo, order_term[0])),
+    }
+
+
+@router.post("/{ticket_id}/pay-before-collection")
+async def approve_pay_before_collection(
+    ticket_id: str,
+    body: PayBeforeCollectionBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm", "tickets.release_on_account")),
+):
+    """Finance approves pay before collection directly (no request needed),
+    the same way they register a deposit directly."""
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required")
+    oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
+    rr = ticket.get("release_request") or {}
+    if rr.get("status") == "pending" and rr.get("requested_by_id") == current_user.get("id"):
+        raise HTTPException(status_code=403, detail="You can't approve a request you raised yourself")
+    blocks = _release_stage_blocks(ticket, order)
+    if blocks:
+        raise HTTPException(status_code=400, detail=" ".join(blocks))
+    return await _commit_pay_before_collection(
+        oid=oid, ticket=ticket, ticket_id=ticket_id, odoo=odoo, order=order, company_id=company_id,
+        partner_id=partner_id, current_user=current_user, reason=reason, background_tasks=background_tasks,
+        request_reason=rr.get("reason") if rr.get("status") == "pending" else None,
+    )
 
 @router.post("/{ticket_id}/send-deposit-proforma")
 async def send_deposit_proforma(
@@ -3125,26 +3642,18 @@ async def get_invoice_balance(
         return {"invoice_id": None, "invoice_name": None, "amount_total": 0, "amount_residual": 0, "payment_state": "not_found"}
 
     try:
-        invoices = odoo.read(
-            "account.move", inv_ids,
-            fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type"],
-        )
+        full_invoice = await _resolve_balance_invoice(odoo, ticket["order_id"], inv_ids)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error reading invoices: {str(e)}")
-
-    # The full SO invoice is the customer invoice with the largest amount_total — down
-    # payment invoices are always smaller partial amounts against the same order.
-    out_invoices = [i for i in invoices if i.get("move_type") == "out_invoice"]
-    if not out_invoices:
-        return {"invoice_id": None, "invoice_name": None, "amount_total": 0, "amount_residual": 0, "payment_state": "not_found"}
-
-    full_invoice = max(out_invoices, key=lambda i: i.get("amount_total", 0))
+    if not full_invoice:
+        return {"invoice_id": None, "invoice_name": None, "amount_total": 0, "amount_residual": 0, "payment_state": "paid"}
     return {
         "invoice_id":      full_invoice["id"],
         "invoice_name":    full_invoice["name"],
         "amount_total":    full_invoice["amount_total"],
         "amount_residual": full_invoice["amount_residual"],
         "payment_state":   full_invoice["payment_state"],
+        "invoice_date_due": full_invoice.get("invoice_date_due") or None,
     }
 
 
@@ -3152,6 +3661,7 @@ async def get_invoice_balance(
 async def register_balance_payment(
     ticket_id: str,
     body: TicketBalancePayment,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
 ):
     """Register a balance (or partial) payment against the full sale invoice.
@@ -3207,30 +3717,24 @@ async def register_balance_payment(
                     ),
                 )
 
-    # Find the full invoice — the out_invoice with the largest amount_total
+    # The invoice this payment goes against — see _resolve_balance_invoice
+    # (8.69): the delivery's own unpaid final invoice, never "the biggest
+    # invoice", which picked the already-paid deposit on a 50/50 order.
     inv_ids = order_row.get("invoice_ids", [])
     if not inv_ids:
         raise HTTPException(status_code=400, detail="No invoices found on this order — confirm the order first")
-
     try:
-        invoices = odoo.read(
-            "account.move", inv_ids,
-            fields=["id", "name", "amount_total", "amount_residual", "payment_state", "move_type"],
-        )
+        full_invoice = await _resolve_balance_invoice(odoo, ticket["order_id"], inv_ids)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error reading invoices: {str(e)}")
-
-    out_invoices = [i for i in invoices if i.get("move_type") == "out_invoice"]
-    if not out_invoices:
-        raise HTTPException(status_code=400, detail="No customer invoice found for this order")
-
-    full_invoice = max(out_invoices, key=lambda i: i.get("amount_total", 0))
+    if not full_invoice:
+        raise HTTPException(status_code=400, detail="Nothing is owing on this order's invoices")
     invoice_id = full_invoice["id"]
-
-    if full_invoice.get("payment_state") == "paid":
-        raise HTTPException(status_code=400, detail="This invoice is already fully paid in Odoo")
-    if full_invoice.get("amount_residual", 0) <= 0:
-        raise HTTPException(status_code=400, detail="No outstanding balance on this invoice")
+    if body.amount > float(full_invoice.get("amount_residual") or 0) + 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That is more than is owing on invoice {full_invoice['name']} (R{float(full_invoice['amount_residual']):,.2f}).",
+        )
 
     # Register payment via Odoo wizard
     pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
@@ -3301,8 +3805,12 @@ async def register_balance_payment(
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
                 "date": body.date, "payment_state": final_state, "amount_residual": final_residual},
     )
+    # 8.69 — if this paid a held order's invoice, tell the customer it's ready.
+    released = await release_collection_holds(order_id=ticket["order_id"], background_tasks=background_tasks,
+                                              actor=current_user)
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
-    return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual}
+    return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual,
+            "customer_notified": bool(released)}
 
 
 @router.get("/from-order/preflight")
@@ -3738,6 +4246,7 @@ async def send_invoice(
                 payment_reference=inv.get("payment_reference"),
                 support_url=order_help_url(ticket.get("order_id")) if ticket.get("order_id") else None,
                 due_date=inv.get("invoice_date_due") or None,
+                collection_after_payment=ticket.get("status") == "awaiting_payment",
             )
             invoice_email_sent = True
     except Exception as e:

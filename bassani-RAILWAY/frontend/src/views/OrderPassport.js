@@ -65,6 +65,7 @@ const PACK_COLOUR = {
   queued:    "bg-blue-50 text-blue-700",
   packing:   "bg-amber-50 text-amber-700",
   ready:     "bg-indigo-50 text-indigo-700",
+  awaiting_payment: "bg-amber-50 text-amber-700",
   complete:  "bg-green-50 text-green-700",
   incomplete:"bg-orange-50 text-orange-700",
   cancelled: "bg-red-50 text-red-600",
@@ -82,6 +83,7 @@ const PACK_COLOUR = {
 // timeline's own state logic.
 const PACK_LABEL = {
   queued: "Queued", packing: "Packing In Progress", ready: "Ready for Inspection",
+  awaiting_payment: "Packed, Awaiting Payment",
   complete: "Ready for Collection", incomplete: "Incomplete", cancelled: "Cancelled",
   collected: "Collected", cleared: "Cleared", waiting_stock: "Awaiting Stock",
 };
@@ -608,6 +610,9 @@ export default function OrderPassport() {
   if (!data) return null;
 
   const { order, ticket, packing, invoices = [], deliveries, lot_map, product_images = {}, manufacturing_orders, overall_status, support_email, age_tier } = data;
+  // 8.69 — a packed order held for payment isn't "Ready for Collection" yet.
+  const packingDisplayStatus = packing?.status === "complete" && packing?.payment_hold && !packing?.collection_released_at
+    ? "awaiting_payment" : packing?.status;
   // Recurring order review (2026-08-27) — true while this order is a
   // recurring-generated occurrence still awaiting the customer's decision.
   // Mirrors occurrence_already_actioned()'s conditions on the backend, minus
@@ -1332,8 +1337,8 @@ export default function OrderPassport() {
                   <div className="space-y-0">
                     <div className="flex items-center justify-between pb-2 border-b border-gray-50 mb-2">
                       <span className="text-xs text-gray-500">Status</span>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${PACK_COLOUR[packing.status] || "bg-gray-100 text-gray-500"}`}>
-                        {PACK_LABEL[packing.status] || packing.status}
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${PACK_COLOUR[packingDisplayStatus] || "bg-gray-100 text-gray-500"}`}>
+                        {PACK_LABEL[packingDisplayStatus] || packing.status}
                       </span>
                     </div>
                     {packing.packer_name && (

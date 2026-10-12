@@ -12,6 +12,7 @@ const TICKET_STATUS_LABEL = {
   open: "Inquiry Open", quote: "Building Quote",
   sale_order: "Awaiting Deposit", awaiting_deposit: "Awaiting Deposit",
   invoice: "Invoice Raised", confirmed_wip: "In Progress",
+  awaiting_payment: "Packed, Awaiting Payment",
   ready_for_collection: "Ready for Collection", incomplete: "Incomplete",
   queued: "Queued for Packing", packing: "Being Packed", waiting_stock: "Awaiting Stock",
 };
@@ -57,10 +58,17 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
   // 8.68 — an order released on account (approved account customer, no
   // deposit) clears this same gate a different way.
   const onAccount = ticket.payment_arrangement === "on_account" || !!ticket.released_on_account_at;
+  // 8.69 — pay before collection clears the gate a third way: no deposit,
+  // the full amount is paid before the customer is told it's ready.
+  const payBeforeCollection = ticket.payment_arrangement === "pay_before_collection" || !!ticket.pbc_approved_at;
   steps.push(onAccount ? {
     key: "deposit", label: "Released on Account", icon: FileText, state: "done",
     at: ticket.released_on_account_at, by: ticket.released_on_account_by_name,
     sub: ticket.on_account_payment_term?.name ? `${ticket.on_account_payment_term.name} terms, no deposit` : "No deposit",
+  } : payBeforeCollection ? {
+    key: "deposit", label: "Pay Before Collection", icon: FileText, state: "done",
+    at: ticket.pbc_approved_at, by: ticket.pbc_approved_by_name,
+    sub: "No deposit",
   } : {
     key: "deposit", label: "Deposit Registered", icon: FileText,
     state: depositDone ? "done" : (AWAITING_DEPOSIT_STATUSES.includes(ticket.status) ? "current" : "pending"),
@@ -133,12 +141,6 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
     state: packing?.rp_approved_at ? "done" : (packing?.qa_approved_at ? "current" : "pending"),
     at: packing?.rp_approved_at, by: packing?.rp_approved_by,
   });
-  steps.push({
-    key: "ready", label: "Ready for Collection", icon: Truck,
-    state: readyForCollection ? "done" : "pending",
-    at: packing?.completed_at,
-  });
-
   // The real "final" delivery invoice is only ever created in Odoo at
   // mark_complete, after QA+RP sign-off — its Odoo id is stamped onto
   // packing.invoice_id at that exact point (_create_final_invoice /
@@ -146,21 +148,58 @@ export function buildTimelineSteps({ order, ticket, packing, invoices, manufactu
   // that id specifically, rather than assuming "the last invoice in the
   // array is the final one," is required, not just tidier: found live
   // 2026-08-27 — an order that reached "complete" but whose invoice
-  // creation FAILED (see that file's own create_invoices() TypeError
-  // incident) still has readyForCollection=true with only the already-paid
-  // deposit invoice in `invoices`. "Last item in the array" picked that
-  // deposit invoice, mistook it for the final one, and showed Balance
-  // Payment Received as done before any balance had actually been
-  // invoiced, let alone paid. No packing.invoice_id means no final invoice
-  // exists yet, full stop — never fall back to guessing from the array.
+  // creation FAILED still has readyForCollection=true with only the
+  // already-paid deposit invoice in `invoices`. No packing.invoice_id means
+  // no final invoice exists yet, full stop — never guess from the array.
   const finalInv = (readyForCollection && packing?.invoice_id)
     ? invoices?.find(i => i.invoice_id === packing.invoice_id)
     : null;
+  const finalPaid = finalInv && ["paid", "in_payment"].includes(finalInv.payment_state);
+
+  // 8.69 — a deposit or pay-before-collection order must be paid before the
+  // customer is told it's ready, so for those the order is
+  // Invoice Raised → Payment Received → Ready for Collection → Collected.
+  // An on-account or sample order keeps Ready for Collection → Invoice →
+  // Payment, since the customer collects before paying (or pays nothing).
+  // An entry with no payment_hold field predates 8.69 and was notified at
+  // Mark Complete, so it's treated as released.
+  const paymentFirst = !onAccount && !ticket.is_sample;
+  const held = !!packing?.payment_hold && !packing?.collection_released_at;
+  const customerToldReady = readyForCollection && !held;
+
+  if (paymentFirst) {
+    const payNoun = payBeforeCollection ? "Payment" : "Balance Payment";
+    steps.push(finalInv
+      ? { key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name }
+      : { key: "invoice", label: "Invoice Raised", icon: FileText, state: readyForCollection ? "current" : "pending" });
+    steps.push({
+      key: "paid", label: finalPaid ? `${payNoun} Received` : `${payNoun} Due`,
+      icon: Check,
+      state: finalPaid ? "done" : (readyForCollection ? "current" : "pending"),
+      sub: !finalPaid && readyForCollection ? "Needed before collection" : null,
+    });
+    steps.push({
+      key: "ready", label: "Ready for Collection", icon: Truck,
+      state: customerToldReady ? "done" : "pending",
+      at: customerToldReady ? (packing?.customer_notified_at || packing?.completed_at) : null,
+    });
+    steps.push({
+      key: "collected", label: "Collected", icon: CheckCircle2,
+      state: packing?.collected_at ? "done" : (customerToldReady ? "current" : "pending"),
+      at: packing?.collected_at, by: packing?.collected_by,
+    });
+    return steps;
+  }
+
+  steps.push({
+    key: "ready", label: "Ready for Collection", icon: Truck,
+    state: readyForCollection ? "done" : "pending",
+    at: packing?.completed_at,
+  });
 
   // On account there's no deposit, so the final invoice is the whole amount:
   // "Payment", not "Balance Payment", and the due date matters most.
-  const payNoun = onAccount ? "Payment" : "Balance Payment";
-  const finalPaid = finalInv && ["paid", "in_payment"].includes(finalInv.payment_state);
+  const payNoun = "Payment";
   if (finalInv) {
     steps.push({ key: "invoice", label: "Invoice Raised", icon: FileText, state: "done", at: finalInv.invoice_date, sub: finalInv.name });
     steps.push({

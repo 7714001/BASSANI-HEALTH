@@ -39,9 +39,11 @@ async def _attach_pipeline_status(orders: list) -> list:
     packing_map: dict = {}
     async for pb in col("packing_board").find(
         {"order_id": {"$in": [str(oid) for oid in order_ids]}},
-        {"order_id": 1, "status": 1},
+        {"order_id": 1, "status": 1, "payment_hold": 1, "collection_released_at": 1},
     ):
-        packing_map[pb["order_id"]] = pb.get("status")
+        # 8.69 — held for payment: not "Ready for Collection" to the customer yet.
+        held = pb.get("payment_hold") and not pb.get("collection_released_at") and pb.get("status") == "complete"
+        packing_map[pb["order_id"]] = "awaiting_payment" if held else pb.get("status")
     for order in orders:
         order["linked_ticket"] = ticket_map.get(order["id"])
         order["packing_status"] = packing_map.get(str(order["id"]))

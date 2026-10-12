@@ -2484,14 +2484,14 @@ export function Orders() {
               // mix-up already fixed in OrderTimeline.js/OrderPassport.js,
               // 2026-08-27). Was telling a customer/reseller their order was
               // ready to collect before QA/RP had even signed off.
-              const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
-              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
+              const PACK_LABEL = { queued:"Queued for Packing", packing:"Being Packed", ready:"Ready for Inspection", awaiting_payment:"Packed, Awaiting Payment", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared", waiting_stock:"Awaiting Stock" };
+              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", awaiting_payment:"amber", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray", waiting_stock:"orange" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
               if (t) {
                 const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
                 const EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
-                const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
-                const STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
+                const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", awaiting_payment:"amber", ready_for_collection:"green", incomplete:"orange" };
+                const STATUS_LABEL = { open:"Open", quote:"Building Quote", sale_order:"Awaiting Deposit", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice Raised", confirmed_wip:"In Progress", awaiting_payment:"Packed, Awaiting Payment", ready_for_collection:"Ready for Collection", incomplete:"Incomplete" };
                 return t.exit_status
                   ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status] || t.exit_status}</Badge>
                   : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
@@ -2504,15 +2504,15 @@ export function Orders() {
               if (!t) return <span className="text-xs text-gray-300">—</span>;
               const EXIT_COLOR = { not_interested:"gray", cancelled:"red", complete:"green" };
               const EXIT_LABEL = { not_interested:"Not Interested", cancelled:"Cancelled", complete:"Complete" };
-              const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", ready_for_collection:"green", incomplete:"orange" };
-              const STATUS_LABEL = { open:"Open", quote:"Quote", sale_order:"Sale Order", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice", confirmed_wip:"WIP", ready_for_collection:"Ready", incomplete:"Incomplete" };
+              const STATUS_COLOR = { open:"gray", quote:"amber", sale_order:"blue", awaiting_deposit:"blue", invoice:"indigo", confirmed_wip:"teal", awaiting_payment:"amber", ready_for_collection:"green", incomplete:"orange" };
+              const STATUS_LABEL = { open:"Open", quote:"Quote", sale_order:"Sale Order", awaiting_deposit:"Awaiting Deposit", invoice:"Invoice", confirmed_wip:"WIP", awaiting_payment:"Awaiting Payment", ready_for_collection:"Ready", incomplete:"Incomplete" };
               return t.exit_status
                 ? <Badge color={EXIT_COLOR[t.exit_status]}>{EXIT_LABEL[t.exit_status]}</Badge>
                 : <Badge color={STATUS_COLOR[t.status]}>{STATUS_LABEL[t.status] || t.status}</Badge>;
             }}]:[]),
             ...(!isReseller && !isCustomer?[{ id:"packing", header:"Packing", enableSorting:false, meta:{className:"hidden lg:table-cell"}, cell:({row:{original:o}})=>{
-              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
-              const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready for Inspection", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
+              const PACK_COLOR = { queued:"blue", packing:"amber", ready:"indigo", awaiting_payment:"amber", complete:"green", incomplete:"orange", cancelled:"red", collected:"teal", cleared:"gray" };
+              const PACK_LABEL = { queued:"Queued", packing:"Packing", ready:"Ready for Inspection", awaiting_payment:"Awaiting Payment", complete:"Ready for Collection", incomplete:"Incomplete", cancelled:"Cancelled", collected:"Collected", cleared:"Cleared" };
               if (o.packing_status) return <Badge color={PACK_COLOR[o.packing_status]}>{PACK_LABEL[o.packing_status] || o.packing_status}</Badge>;
               if (o.state === "sale") return <span className="text-[10px] text-gray-400 italic">Not queued</span>;
               return <span className="text-xs text-gray-200">—</span>;

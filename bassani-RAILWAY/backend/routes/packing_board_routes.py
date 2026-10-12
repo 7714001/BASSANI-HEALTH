@@ -41,6 +41,7 @@ from services.email_service import (
     send_qa_approval_needed,
     send_rp_approval_needed,
     send_invoice_email,
+    send_payment_hold_finance,
 )
 from support_links import order_help_url
 from services.notification_service import notify_ticket_handoff
@@ -142,7 +143,10 @@ async def _with_ticket_summary(entry: dict) -> dict:
     try:
         ticket = await col("tickets").find_one(
             {"type": "sales", "order_id": int(entry["order_id"]), "exit_status": None},
-            {"source": 1, "assigned_to_name": 1, "stage_history": 1, "partial_decision": 1},
+            {"source": 1, "assigned_to_name": 1, "stage_history": 1, "partial_decision": 1,
+             "payment_arrangement": 1, "released_on_account_at": 1, "released_on_account_by_name": 1,
+             "on_account_payment_term": 1, "is_sample": 1, "status": 1,
+             "pbc_approved_at": 1, "pbc_approved_by_name": 1},
         )
     except (ValueError, TypeError):
         pass
@@ -151,6 +155,35 @@ async def _with_ticket_summary(entry: dict) -> dict:
     entry["ticket_assigned_to_name"] = ticket.get("assigned_to_name") if ticket else None
     entry["ticket_stage_history"] = (ticket.get("stage_history") or []) if ticket else []
     entry["partial_decision"] = ticket.get("partial_decision") if ticket else None
+    # 8.69 — how this order is being paid, for the Order Ticket's Payment
+    # card, badge and timeline.
+    entry["payment_arrangement"] = (
+        "sample" if (ticket or {}).get("is_sample")
+        else ((ticket or {}).get("payment_arrangement") or ("deposit" if ticket else None))
+    )
+    entry["payment_required_before_collection"] = payment_required_before_collection(ticket)
+    for k in ("released_on_account_at", "released_on_account_by_name", "on_account_payment_term",
+              "pbc_approved_at", "pbc_approved_by_name"):
+        entry[k] = (ticket or {}).get(k)
+    entry["ticket_status"] = (ticket or {}).get("status")
+    return entry
+
+
+def _with_invoice_payment(entry: dict) -> dict:
+    """8.69 — live payment state of this delivery's final invoice, for the
+    Order Ticket's Payment card. Non-fatal: None when there's no invoice or
+    Odoo can't be read."""
+    entry["invoice_payment"] = None
+    if entry.get("invoice_id"):
+        inv = _read_invoice_payment(get_odoo_client(), entry["invoice_id"])
+        if inv:
+            entry["invoice_payment"] = {
+                "name": inv.get("name"), "state": inv.get("state"),
+                "payment_state": inv.get("payment_state"),
+                "amount_residual": float(inv.get("amount_residual") or 0),
+                "amount_total": float(inv.get("amount_total") or 0),
+                "paid": _invoice_is_paid(inv),
+            }
     return entry
 
 
@@ -313,9 +346,13 @@ async def get_board_state(warehouse_id: Optional[int] = None, search: Optional[s
     if order_ids:
         async for t in col("tickets").find(
             {"type": "sales", "order_id": {"$in": list(order_ids)}, "exit_status": None},
-            {"order_id": 1, "source": 1},
+            {"order_id": 1, "source": 1, "payment_arrangement": 1, "is_sample": 1, "released_on_account_at": 1},
         ):
-            ticket_map[t["order_id"]] = {"ticket_id": str(t["_id"]), "source": t.get("source")}
+            ticket_map[t["order_id"]] = {
+                "ticket_id": str(t["_id"]), "source": t.get("source"),
+                # 8.69 — badge on the Orders board ("Pay before collection")
+                "payment_arrangement": "sample" if t.get("is_sample") else (t.get("payment_arrangement") or "deposit"),
+            }
     for e in entries:
         try:
             t = ticket_map.get(int(e["order_id"]))
@@ -323,6 +360,7 @@ async def get_board_state(warehouse_id: Optional[int] = None, search: Optional[s
             t = None
         e["ticket_id"] = t["ticket_id"] if t else None
         e["ticket_source"] = t["source"] if t else None
+        e["payment_arrangement"] = t["payment_arrangement"] if t else None
 
     return entries
 
@@ -381,6 +419,8 @@ async def _sync_sales_ticket(
     reason: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     actor: Optional[dict] = None,
+    payment_received: bool = False,
+    note: Optional[str] = None,
 ):
     """
     Phase 8.4 — write an Orders outcome (complete/incomplete/cancelled) back
@@ -416,6 +456,9 @@ async def _sync_sales_ticket(
             updates["status"] = "partially_fulfilled"
         elif outcome == "ready_for_collection":
             updates["status"] = "ready_for_collection"
+        elif outcome == "awaiting_payment":
+            # 8.69 — packed and signed off, customer notice held until paid.
+            updates["status"] = "awaiting_payment"
         else:  # complete | cancelled — terminal exit
             updates["exit_status"] = outcome
         await col("tickets").update_one(
@@ -426,7 +469,7 @@ async def _sync_sales_ticket(
                 "actor_id": (actor or {}).get("id"),
                 "actor_name": (actor or {}).get("name") or (actor or {}).get("username") or "system",
                 "at": now,
-                "note": f"Orders ticket reached '{outcome}'" + (f": {reason}" if reason else ""),
+                "note": note or (f"Orders ticket reached '{outcome}'" + (f": {reason}" if reason else "")),
             }}},
         )
         await notify_ticket_handoff(ticket.get("customer_name", ""), outcome, ticket.get("assigned_to"))
@@ -458,9 +501,304 @@ async def _sync_sales_ticket(
                         customer_name=ticket.get("customer_name", ""),
                         cc=other_emails or None,
                         support_url=order_help_url(order_id),
+                        payment_received=payment_received,
                     )
     except Exception as e:
         logger.warning("sales_ticket_sync_failed order_id=%s error=%s", order_id, e)
+
+
+# ── 8.69 — Payment before collection ──────────────────────────────────────────
+# A deposit order (balance still owing) or a pay-before-collection order is
+# packed and signed off as normal, but the customer is only told it is ready
+# once its final invoice is paid. The hold is per delivery (one packing_board
+# entry, its own final invoice), so a backorder delivery gets its own hold.
+#
+# Fields on the packing_board entry:
+#   payment_hold            True while the customer notice is held
+#   payment_hold_at / _amount / _invoice_name   what was owing when held
+#   held_notice             what to send on release: {kind: full|partial, ...}
+#   collection_released_at  when it was released (payment received)
+#   collection_released_by  who/what released it (user, "Automatic")
+#   customer_notified_at    when the customer was told it's ready
+# An entry with no payment_hold field at all predates 8.69: treated as
+# already notified (decision 2026-10-12); Mark as Collected still checks
+# payment live for it.
+
+PAID_STATES = ("paid", "in_payment")
+
+
+class _DeferredTasks:
+    """Stand-in for BackgroundTasks when the caller has none (the 15-minute
+    payment poll): collects the sends, then runs them in a worker thread so a
+    slow email provider can't stall the event loop."""
+    def __init__(self):
+        self.tasks: list = []
+
+    def add_task(self, fn, *args, **kwargs):
+        self.tasks.append((fn, args, kwargs))
+
+    async def run(self):
+        for fn, args, kwargs in self.tasks:
+            try:
+                await asyncio.to_thread(fn, *args, **kwargs)
+            except Exception as e:
+                logger.warning("deferred_email_failed fn=%s error=%s", getattr(fn, "__name__", fn), e)
+
+
+async def _linked_sales_ticket(order_id) -> Optional[dict]:
+    try:
+        return await col("tickets").find_one({"type": "sales", "order_id": int(order_id), "exit_status": None})
+    except (ValueError, TypeError):
+        return None
+
+
+def payment_required_before_collection(ticket: Optional[dict]) -> bool:
+    """Does this order have to be paid before the customer collects? True for
+    a deposit order and a pay-before-collection order; False for an order
+    released on account (paid later, per terms), a sample, or a legacy order
+    with no Sales ticket."""
+    if not ticket:
+        return False
+    if ticket.get("is_sample"):
+        return False
+    if ticket.get("payment_arrangement") == "on_account" or ticket.get("released_on_account_at"):
+        return False
+    return True
+
+
+def _read_invoice_payment(odoo, invoice_id) -> Optional[dict]:
+    try:
+        rows = odoo.read("account.move", [int(invoice_id)],
+                         fields=["name", "state", "payment_state", "amount_residual", "amount_total"])
+    except Exception as e:
+        logger.warning("invoice_payment_read_failed invoice_id=%s error=%s", invoice_id, e)
+        return None
+    return rows[0] if rows else None
+
+
+def down_payment_invoice_ids(odoo, move_ids: list) -> set:
+    """Which of these invoices are pure down-payment (deposit / advance
+    payment) invoices: every product line is linked to a sale.order.line with
+    is_downpayment set. A final invoice also carries a negative down-payment
+    deduction line, but has real product lines too, so it never matches.
+    Live-checked on Odoo 19 (2026-10-12). Returns an empty set on any error."""
+    if not move_ids:
+        return set()
+    try:
+        lines = odoo.search_read(
+            "account.move.line",
+            [("move_id", "in", list(move_ids)), ("display_type", "=", "product")],
+            fields=["move_id", "sale_line_ids"], limit=5000,
+        )
+        sol_ids = list({s for l in lines for s in (l.get("sale_line_ids") or [])})
+        dp_sols = set()
+        if sol_ids:
+            dp_sols = {r["id"] for r in odoo.read("sale.order.line", sol_ids, fields=["is_downpayment"])
+                       if r.get("is_downpayment")}
+        by_move: dict = {}
+        for l in lines:
+            mid = l["move_id"][0] if isinstance(l["move_id"], list) else l["move_id"]
+            sols = l.get("sale_line_ids") or []
+            by_move.setdefault(mid, []).append(bool(sols) and all(s in dp_sols for s in sols))
+        return {mid for mid, flags in by_move.items() if flags and all(flags)}
+    except Exception as e:
+        logger.warning("down_payment_invoice_check_failed error=%s", e)
+        return set()
+
+
+def _invoice_is_paid(inv: Optional[dict]) -> bool:
+    return bool(inv) and inv.get("state") == "posted" and inv.get("payment_state") in PAID_STATES
+
+
+async def _send_collection_notices(entry: dict, ticket: Optional[dict], notice: dict,
+                                   background_tasks, actor: Optional[dict], payment_received: bool,
+                                   note: Optional[str] = None) -> None:
+    """The customer/reseller "your order is ready" notices, plus the Sales
+    ticket status, exactly as Mark Complete has always sent them. Called at
+    Mark Complete when nothing is owing, or later by release_collection_holds
+    once payment lands."""
+    order_id = str(entry.get("order_id"))
+    routing = await get_email_routing()
+    if notice.get("kind") == "partial":
+        await _sync_sales_ticket(order_id, "partially_fulfilled", background_tasks=background_tasks,
+                                 actor=actor, payment_received=payment_received, note=note)
+        if entry.get("reseller_id"):
+            _res = await col("resellers").find_one({"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
+            if _res and _res.get("email"):
+                background_tasks.add_task(
+                    send_partial_delivery_ready,
+                    reseller_email=_res["email"],
+                    order_ref=str(entry.get("order_id")),
+                    customer_name=entry.get("customer_name", ""),
+                    reseller_name=_res.get("name") or "",
+                    shipped_lines=notice.get("shipped_lines") or [],
+                    backorder_lines=notice.get("backorder_lines") or [],
+                    cc=routing.get("order_cc") or None,
+                )
+        return
+    await _sync_sales_ticket(order_id, "ready_for_collection", background_tasks=background_tasks,
+                             actor=actor, payment_received=payment_received, note=note)
+    if entry.get("reseller_id"):
+        _res = await col("resellers").find_one({"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
+        if _res and _res.get("email"):
+            background_tasks.add_task(
+                send_order_ready_for_collection_reseller,
+                reseller_email=_res["email"],
+                order_ref=str(entry.get("order_id")),
+                customer_name=entry.get("customer_name", ""),
+                reseller_name=_res.get("name", ""),
+                cc=routing.get("order_cc") or None,
+                payment_received=payment_received,
+            )
+
+
+async def hold_or_notify_after_complete(entry: dict, notice: dict, background_tasks, actor: dict) -> dict:
+    """Mark Complete's customer-notice step (8.69). If the order must be paid
+    before collection and its final invoice isn't paid, hold the notice,
+    move the Sales ticket to Awaiting Payment and tell Finance. Otherwise send
+    the notices now. Returns the fields written to the entry. Never raises:
+    the delivery and invoice are already committed in Odoo by this point."""
+    try:
+        return await _hold_or_notify_impl(entry, notice, background_tasks, actor)
+    except Exception as e:
+        logger.error("hold_or_notify_after_complete_failed order_id=%s error=%s", entry.get("order_id"), e)
+        return {}
+
+
+async def _hold_or_notify_impl(entry: dict, notice: dict, background_tasks, actor: dict) -> dict:
+    ticket = await _linked_sales_ticket(entry.get("order_id"))
+    now = datetime.now(timezone.utc)
+    inv = None
+    if payment_required_before_collection(ticket):
+        if entry.get("invoice_id"):
+            inv = _read_invoice_payment(get_odoo_client(), entry["invoice_id"])
+        if not _invoice_is_paid(inv):
+            amount_due = float((inv or {}).get("amount_residual") or 0) if inv else None
+            fields = {
+                "payment_hold": True,
+                "payment_hold_at": now,
+                "payment_hold_amount": amount_due,
+                "payment_hold_invoice_name": (inv or {}).get("name") or entry.get("inv_num") or None,
+                "held_notice": notice,
+                "collection_released_at": None,
+                "customer_notified_at": None,
+            }
+            await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": fields})
+            due_txt = f"R{amount_due:,.2f}" if amount_due is not None else "the invoice amount (invoice not raised yet)"
+            await _sync_sales_ticket(
+                str(entry["order_id"]), "awaiting_payment", actor=actor,
+                note=f"Packed and signed off. Customer will be told it is ready once {due_txt} is paid.",
+            )
+            routing = await get_email_routing()
+            order_ref = str(entry.get("order_id"))
+            try:
+                _so = get_odoo_client().read("sale.order", [int(entry["order_id"])], fields=["name"])
+                order_ref = _so[0]["name"] if _so else order_ref
+            except Exception:
+                pass
+            if routing.get("finance_notification_to"):
+                background_tasks.add_task(
+                    send_payment_hold_finance,
+                    routing["finance_notification_to"],
+                    customer_name=entry.get("customer_name", ""),
+                    order_ref=order_ref,
+                    invoice_ref=fields["payment_hold_invoice_name"] or "",
+                    amount_due=amount_due,
+                    arrangement=(ticket or {}).get("payment_arrangement") or "deposit",
+                )
+            await audit_log(
+                "packing.payment_hold", "packing_board", str(entry["order_id"]),
+                entity_label=entry.get("customer_name", ""), user=actor,
+                detail={"invoice_id": entry.get("invoice_id"), "amount_due": amount_due,
+                        "arrangement": (ticket or {}).get("payment_arrangement") or "deposit"},
+            )
+            await broadcast_monitor_refresh()
+            return fields
+    await _send_collection_notices(entry, ticket, notice, background_tasks, actor, payment_received=False)
+    fields = {"payment_hold": False, "customer_notified_at": now}
+    await col("packing_board").update_one({"_id": entry["_id"]}, {"$set": fields})
+    return fields
+
+
+async def release_collection_holds(
+    order_id: Optional[str] = None,
+    invoice_ids: Optional[list] = None,
+    background_tasks=None,
+    actor: Optional[dict] = None,
+) -> list:
+    """The single place a held "ready for collection" notice is released
+    (8.69). Finds held entries (by order and/or invoice), re-reads each final
+    invoice in Odoo, and for every one now paid: sends the held notices,
+    moves the Sales ticket to Ready for Collection, stamps
+    customer_notified_at, logs it. Idempotent: an entry is claimed with a
+    conditional update before anything is sent, so two callers racing (the
+    poll and a button) can never notify twice. Never raises.
+
+    Called after every payment path: Register Balance Payment / deposit on
+    the ticket, Register Payment and Apply Credit on invoices, bank
+    reconciliation matches, the 15-minute payment poll, and when a ticket or
+    order ticket is opened."""
+    query: dict = {"payment_hold": True, "collection_released_at": None,
+                   "status": {"$in": ["complete", "collected"]}}
+    ors = []
+    if order_id is not None:
+        ors.append({"order_id": str(order_id)})
+    if invoice_ids:
+        ors.append({"invoice_id": {"$in": [int(i) for i in invoice_ids]}})
+    if ors:
+        query["$or"] = ors
+    try:
+        held = await col("packing_board").find(query).to_list(length=200)
+    except Exception as e:
+        logger.warning("release_collection_holds_query_failed error=%s", e)
+        return []
+    held = [e for e in held if e.get("invoice_id")]
+    if not held:
+        return []
+    try:
+        odoo = get_odoo_client()
+        rows = odoo.read("account.move", list({int(e["invoice_id"]) for e in held}),
+                         fields=["name", "state", "payment_state", "amount_residual"])
+    except Exception as e:
+        logger.warning("release_collection_holds_odoo_failed error=%s", e)
+        return []
+    inv_map = {r["id"]: r for r in rows}
+    tasks = background_tasks if background_tasks is not None else _DeferredTasks()
+    actor = actor or {"id": None, "name": "Automatic (payment received)", "role": "system"}
+    released = []
+    for entry in held:
+        inv = inv_map.get(int(entry["invoice_id"]))
+        if not _invoice_is_paid(inv):
+            continue
+        now = datetime.now(timezone.utc)
+        claimed = await col("packing_board").find_one_and_update(
+            {"_id": entry["_id"], "payment_hold": True, "collection_released_at": None},
+            {"$set": {"collection_released_at": now, "customer_notified_at": now,
+                      "collection_released_by": actor.get("name") or actor.get("username") or "Automatic"}},
+            return_document=True,
+        )
+        if not claimed:
+            continue
+        ticket = await _linked_sales_ticket(entry["order_id"])
+        notice = entry.get("held_notice") or {"kind": "full"}
+        await _send_collection_notices(
+            claimed, ticket, notice, tasks, actor, payment_received=True,
+            note=f"Payment received ({inv['name']}), customer told the order is ready to collect",
+        )
+        claimed.pop("_id", None)
+        await push_update(_with_age(claimed))
+        await audit_log(
+            "packing.payment_hold_released", "packing_board", str(entry["order_id"]),
+            entity_label=entry.get("customer_name", ""), user=actor if actor.get("id") else None,
+            detail={"invoice_id": entry["invoice_id"], "invoice_name": inv.get("name"),
+                    "payment_state": inv.get("payment_state"), "released_by": claimed.get("collection_released_by")},
+        )
+        released.append(str(entry["order_id"]))
+    if released:
+        await broadcast_monitor_refresh()
+        if isinstance(tasks, _DeferredTasks):
+            await tasks.run()
+    return released
 
 
 # ── WebSocket auth helpers ────────────────────────────────────────────────────
@@ -1071,9 +1409,11 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
         # order id as a substring the way it was assumed to).
         _ticket_doc = await col("tickets").find_one(
             {"type": "sales", "order_id": sale_order_id, "exit_status": None},
-            {"invoice_id": 1},
+            {"invoice_id": 1, "is_sample": 1, "payment_arrangement": 1, "released_on_account_at": 1,
+             "deposit_invoice_ids": 1},
         )
         _deposit_invoice_id = _ticket_doc.get("invoice_id") if _ticket_doc else None
+        _collection_after_payment = payment_required_before_collection(_ticket_doc)
 
         try:
             _order_rows = odoo.read("sale.order", [sale_order_id], fields=["invoice_ids"])
@@ -1094,15 +1434,27 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
         # already established for the deposit invoice — never a parallel-
         # ledger risk (Architecture Principle #1), just avoiding a genuine
         # duplicate-invoice risk. Excludes the deposit invoice specifically.
-        _candidate_ids = [i for i in _invoice_ids_before if i != _deposit_invoice_id]
+        # 8.69 — also exclude every down-payment invoice (several advance
+        # payments on a pay-before-collection order, or a deposit whose id was
+        # overwritten on the ticket by an earlier delivery's final invoice)
+        # and any invoice already linked to another delivery of this order.
+        # Without this, a paid deposit invoice could be reused as a later
+        # delivery's "final" invoice.
+        _excluded = {_deposit_invoice_id} if _deposit_invoice_id else set()
+        _excluded |= set((_ticket_doc or {}).get("deposit_invoice_ids") or [])
+        async for _other in col("packing_board").find(
+            {"order_id": str(sale_order_id), "invoice_id": {"$ne": None}}, {"invoice_id": 1},
+        ):
+            if _other.get("invoice_id"):
+                _excluded.add(int(_other["invoice_id"]))
+        _candidate_ids = [i for i in _invoice_ids_before if i not in _excluded]
         _existing = []
         if _candidate_ids:
             try:
                 _rows = odoo.read("account.move", _candidate_ids, fields=["id", "name", "state", "move_type"])
-                _existing = sorted(
-                    (r for r in _rows if r.get("move_type") == "out_invoice" and r.get("state") != "cancel"),
-                    key=lambda r: r["id"], reverse=True,
-                )
+                _rows = [r for r in _rows if r.get("move_type") == "out_invoice" and r.get("state") != "cancel"]
+                _dp = down_payment_invoice_ids(odoo, [r["id"] for r in _rows])
+                _existing = sorted((r for r in _rows if r["id"] not in _dp), key=lambda r: r["id"], reverse=True)
             except Exception:
                 _existing = []
 
@@ -1216,6 +1568,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                         payment_reference=_inv.get("payment_reference"),
                         support_url=order_help_url(sale_order_id),
                         due_date=_inv.get("invoice_date_due") or None,
+                        collection_after_payment=_collection_after_payment,
                     )
                     invoice_sent = True
                     # Chatter note (2026-08-28) — see the matching note in
@@ -1450,24 +1803,10 @@ async def complete_entry(
         user=current_user,
         detail=delivery_result,
     )
-    await _sync_sales_ticket(
-        body.order_id, "partially_fulfilled" if is_partial else "ready_for_collection",
-        background_tasks=background_tasks, actor=current_user,
-    )
-
     _routing = await get_email_routing()
 
     if is_partial:
         # ── Partial: notify reseller of first delivery + backorder creation ──
-        _reseller_email: Optional[str] = None
-        _reseller_name: Optional[str] = None
-        if entry.get("reseller_id"):
-            _res = await col("resellers").find_one(
-                {"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
-            )
-            if _res:
-                _reseller_email = _res.get("email")
-                _reseller_name = _res.get("name")
         _shipped_items = [
             {"name": i["name"], "qty": i.get("qty_reserved", i.get("qty", 0))}
             for i in entry.get("items", [])
@@ -1478,17 +1817,14 @@ async def complete_entry(
             for i in entry.get("items", [])
             if i.get("is_backordered")
         ]
-        if _reseller_email:
-            background_tasks.add_task(
-                send_partial_delivery_ready,
-                reseller_email=_reseller_email,
-                order_ref=str(entry.get("order_id", body.order_id)),
-                customer_name=entry.get("customer_name", ""),
-                reseller_name=_reseller_name or "",
-                shipped_lines=_shipped_items,
-                backorder_lines=_backorder_items,
-                cc=_routing.get("order_cc") or None,
-            )
+        # 8.69 — the customer/reseller "ready" notices (and the Sales ticket's
+        # status) go through hold_or_notify_after_complete: sent now if
+        # nothing is owing, otherwise held until the invoice is paid.
+        hold_fields = await hold_or_notify_after_complete(
+            {**entry, **_complete_set},
+            {"kind": "partial", "shipped_lines": _shipped_items, "backorder_lines": _backorder_items},
+            background_tasks, current_user,
+        )
         if _routing.get("order_to"):
             background_tasks.add_task(
                 send_backorder_created_internal,
@@ -1516,25 +1852,23 @@ async def complete_entry(
                 packer_name=(updated or entry).get("assigned_packer", "") or (updated or entry).get("packer_name", ""),
                 supervisor_emails=_sup_emails,
             )
-        if (updated or entry).get("reseller_id"):
-            _full_res = await col("resellers").find_one(
-                {"id": (updated or entry)["reseller_id"]}, {"email": 1, "name": 1, "_id": 0}
-            )
-            if _full_res and _full_res.get("email"):
-                background_tasks.add_task(
-                    send_order_ready_for_collection_reseller,
-                    reseller_email=_full_res["email"],
-                    order_ref=str((updated or entry).get("order_id", body.order_id)),
-                    customer_name=(updated or entry).get("customer_name", ""),
-                    reseller_name=_full_res.get("name", ""),
-                    cc=_routing.get("order_cc") or None,
-                )
+        hold_fields = await hold_or_notify_after_complete(
+            {**entry, **_complete_set}, {"kind": "full"}, background_tasks, current_user,
+        )
+
+    if hold_fields:
+        refreshed = await col("packing_board").find_one({"_id": entry["_id"]})
+        if refreshed:
+            refreshed.pop("_id", None)
+            await push_update(_with_age(refreshed))
 
     response: dict = {
         "success": True,
         "delivery_validated": delivery_result["success"],
         "invoice_id": invoice_id,
         "invoice_name": invoice_name,
+        "payment_hold": bool(hold_fields.get("payment_hold")),
+        "payment_hold_amount": hold_fields.get("payment_hold_amount"),
     }
     if is_partial:
         response["is_partial"] = True
@@ -1664,6 +1998,18 @@ async def retry_invoice_creation(
 
     if not invoice_id:
         raise HTTPException(status_code=502, detail=result["invoice_warning"] or "Invoice creation failed")
+    # 8.69 — a held order's invoice now exists; if it's already settled (a
+    # 100% deposit leaves a R0 final invoice) the customer can be told now.
+    if entry.get("payment_hold"):
+        if entry.get("payment_hold_amount") is None:
+            _inv = _read_invoice_payment(get_odoo_client(), invoice_id)
+            if _inv:
+                await col("packing_board").update_one(
+                    {"_id": entry["_id"]},
+                    {"$set": {"payment_hold_amount": float(_inv.get("amount_residual") or 0),
+                              "payment_hold_invoice_name": _inv.get("name")}},
+                )
+        await release_collection_holds(order_id=body.order_id, background_tasks=background_tasks)
     return {"success": True, "invoice_id": invoice_id, "invoice_name": result["invoice_name"], "warning": result["invoice_warning"]}
 
 
@@ -1891,6 +2237,32 @@ async def mark_collected(
         raise HTTPException(status_code=400, detail="This delivery has already been marked as collected")
     if entry.get("status") != "complete":
         raise HTTPException(status_code=400, detail="Delivery must be complete before it can be marked as collected")
+
+    # 8.69 — goods never leave unpaid. A deposit or pay-before-collection
+    # order needs its final invoice paid in Odoo first, checked live here
+    # whatever the entry's hold flag says (covers orders completed before
+    # 8.69, and any Admin Override). On account and sample orders are exempt.
+    ticket = await _linked_sales_ticket(body.order_id)
+    if payment_required_before_collection(ticket):
+        if not entry.get("invoice_id"):
+            raise HTTPException(
+                status_code=400,
+                detail="No invoice has been raised for this delivery yet, so payment can't be confirmed. "
+                       "Retry invoice creation first.",
+            )
+        inv = _read_invoice_payment(get_odoo_client(), entry["invoice_id"])
+        if inv is None:
+            raise HTTPException(status_code=502, detail="Could not check the invoice's payment in Odoo. Try again shortly.")
+        if not _invoice_is_paid(inv):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Invoice {inv.get('name')} still has R{float(inv.get('amount_residual') or 0):,.2f} "
+                        "outstanding. The customer can't collect until Finance records the payment."),
+            )
+        if entry.get("payment_hold") and not entry.get("collection_released_at"):
+            # Paid, but the release hasn't run yet (e.g. paid in Odoo moments
+            # ago): release it now so the notice and status are consistent.
+            await release_collection_holds(order_id=body.order_id, background_tasks=background_tasks)
 
     now = datetime.now(timezone.utc)
     actor_name = current_user.get("name") or current_user.get("username", "")
@@ -2380,7 +2752,12 @@ async def get_entry(order_id: str, picking_id: Optional[int] = None, current_use
     entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID)
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-    return await _with_ticket_summary(_with_picking_lots(_with_age(entry)))
+    # 8.69 — opening a held order re-checks payment, so a payment entered
+    # straight in Odoo releases the notice without waiting for the poll.
+    if entry.get("payment_hold") and not entry.get("collection_released_at"):
+        if await release_collection_holds(order_id=order_id):
+            entry = await col("packing_board").find_one(_entry_query(order_id, picking_id), NO_ID) or entry
+    return _with_invoice_payment(await _with_ticket_summary(_with_picking_lots(_with_age(entry))))
 
 
 @router.post("/adopt")
@@ -2626,6 +3003,16 @@ async def override_status(
     entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
+    # 8.69 — an override can't release unpaid goods either.
+    if body.status == "collected":
+        _t = await _linked_sales_ticket(body.order_id)
+        if payment_required_before_collection(_t):
+            _inv = _read_invoice_payment(get_odoo_client(), entry["invoice_id"]) if entry.get("invoice_id") else None
+            if not _invoice_is_paid(_inv):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This order's invoice isn't paid. Goods can't be marked collected until Finance records the payment.",
+                )
     updated = await col("packing_board").find_one_and_update(
         {"_id": entry["_id"]},
         {"$set": {"status": body.status}},
@@ -2633,15 +3020,21 @@ async def override_status(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Order not on board")
+    _hold_target = dict(updated)
     updated.pop("_id", None)
     await push_update(updated)
     await audit_log("packing.override_status", "packing_board", body.order_id,
                     entity_label=body.order_id, user=current_user,
                     detail={"from": entry["status"], "to": body.status})
 
+    # Overriding to complete goes through the same hold-or-notify step as
+    # Mark Complete, so an unpaid order is held rather than announced.
+    if body.status == "complete":
+        await hold_or_notify_after_complete(_hold_target, {"kind": "full"}, background_tasks, current_user)
+        return {"success": True}
+
     # Sync the linked sales ticket when overriding to a terminal packing status.
     _ticket_outcome = {
-        "complete":   "ready_for_collection",
         "incomplete": "incomplete",
         "cancelled":  "cancelled",
         "collected":  "complete",

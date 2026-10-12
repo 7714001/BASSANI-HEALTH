@@ -55,6 +55,7 @@ import RecurringOrders       from "./views/RecurringOrders";
 import DiscountApprovals     from "./views/DiscountApprovals";
 import DiscountRequestView   from "./views/DiscountRequestView";
 import ReleaseRequests       from "./views/ReleaseRequests";
+import ExpectedPayments      from "./views/ExpectedPayments";
 import SupplyGMP             from "./views/SupplyGMP";
 import SupplyMonitor         from "./views/SupplyMonitor";
 import Support               from "./views/Support";
@@ -131,7 +132,7 @@ function AuthRequired({ children }) {
   return children;
 }
 
-function ProtectedRoute({ children, adminOnly, permission, allowRoles }) {
+function ProtectedRoute({ children, adminOnly, permission, anyOf, allowRoles }) {
   const { user, loading, isAdmin, can } = useAuth();
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
@@ -148,6 +149,8 @@ function ProtectedRoute({ children, adminOnly, permission, allowRoles }) {
   // permissions object.
   const roleAllowed = allowRoles && user.role && allowRoles.includes(user.role);
   if (permission && !roleAllowed && !can(permission)) return <Navigate to="/" replace />;
+  // anyOf (8.69): the route is open to anyone holding at least one of these.
+  if (anyOf && !roleAllowed && !anyOf.some(p => can(p))) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -325,7 +328,10 @@ export default function App() {
           <ProtectedRoute permission="supply.view"><AppLayout><SupplyGMP /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/release-requests" element={
-          <ProtectedRoute permission="tickets.release_on_account"><AppLayout><ReleaseRequests /></AppLayout></ProtectedRoute>
+          <ProtectedRoute anyOf={["tickets.release_on_account", "tickets.finance_confirm"]}><AppLayout><ReleaseRequests /></AppLayout></ProtectedRoute>
+        } />
+        <Route path="/tickets/expected-payments" element={
+          <ProtectedRoute permission="tickets.finance_confirm"><AppLayout><ExpectedPayments /></AppLayout></ProtectedRoute>
         } />
         <Route path="/tickets/discounts/:requestId" element={
           <ProtectedRoute permission="discounts.approve"><AppLayout><DiscountRequestView /></AppLayout></ProtectedRoute>

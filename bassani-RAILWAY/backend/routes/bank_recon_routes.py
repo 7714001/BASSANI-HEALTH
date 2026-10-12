@@ -13,7 +13,7 @@ from datetime import datetime, date as date_type, timezone
 from typing import Optional
 from bson import ObjectId
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from auth import require_permission
@@ -379,7 +379,7 @@ class MatchBody(BaseModel):
 
 
 @router.post("/bank-statements/lines/{line_id}/match")
-async def match_line(line_id: str, body: MatchBody, current_user: dict = RECON_PERM):
+async def match_line(line_id: str, body: MatchBody, background_tasks: BackgroundTasks, current_user: dict = RECON_PERM):
     """
     Confirm a match: register a payment in Odoo via account.payment.register,
     then stamp the line as manually_matched.
@@ -462,6 +462,13 @@ async def match_line(line_id: str, body: MatchBody, current_user: dict = RECON_P
         detail={"invoice_id": body.invoice_id, "amount": amount, "odoo_payment_id": odoo_payment_id},
     )
 
+    # 8.69 — a matched payment on a held order's invoice tells the customer
+    # it's ready to collect. Never fails the match.
+    try:
+        from routes.packing_board_routes import release_collection_holds
+        await release_collection_holds(invoice_ids=[body.invoice_id], background_tasks=background_tasks)
+    except Exception as e:
+        logger.warning("release_collection_holds_after_match_failed invoice_id=%s error=%s", body.invoice_id, e)
     return {"success": True, "odoo_payment_id": odoo_payment_id}
 
 

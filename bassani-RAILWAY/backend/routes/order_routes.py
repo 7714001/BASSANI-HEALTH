@@ -20,7 +20,7 @@ from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
     send_backorder_alert_internal,
-    send_deposit_due_proforma, send_order_confirmed_account_terms,
+    send_deposit_due_proforma, send_order_confirmed_account_terms, send_order_confirmed_pay_before_collection,
 )
 from services.age_tier import board_entry_age_fields, ticket_age_fields
 from config import get_settings
@@ -203,9 +203,12 @@ async def list_orders(
         if order_ids:
             async for pb in col("packing_board").find(
                 {"order_id": {"$in": [str(oid) for oid in order_ids]}},
-                {"order_id": 1, "status": 1},
+                {"order_id": 1, "status": 1, "payment_hold": 1, "collection_released_at": 1},
             ):
-                packing_map[pb["order_id"]] = pb.get("status")
+                # 8.69 — a packed order held for payment isn't "Ready for
+                # Collection" to the customer yet.
+                held = pb.get("payment_hold") and not pb.get("collection_released_at") and pb.get("status") == "complete"
+                packing_map[pb["order_id"]] = "awaiting_payment" if held else pb.get("status")
         for order in orders:
             order["packing_status"] = packing_map.get(str(order["id"]))
 
@@ -1141,6 +1144,7 @@ def _passport_status(order: dict, ticket: dict | None, invoice: dict | None, del
         "quote":                ("Building Quote",           "blue",  "Quotation is being prepared."),
         "sale_order":           ("Confirmed — Awaiting Packing", "blue", "Order confirmed. Packing will begin shortly."),
         "confirmed_wip":        ("In Fulfilment",            "green", "Order is on the packing floor."),
+        "awaiting_payment":     ("Packed, Awaiting Payment", "amber", "Order packed and approved. It is ready to collect as soon as payment is received."),
         "ready_for_collection": ("Ready for Collection",     "green", "Order packed and approved — invoice issued, awaiting customer collection."),
         "incomplete":           ("Marked Incomplete",     "orange", ticket.get("incomplete_reason") or "Order was marked incomplete."),
         "queued":               ("Queued for Packing",   "blue",   "Sent to packing board — awaiting packer assignment."),
@@ -1279,7 +1283,7 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "stage_history": 1, "scheduled_for": 1, "customer_accepted_at": 1,
          "customer_declined_at": 1, "needs_manual_confirm": 1, "manual_confirm_reason": 1,
          "payment_arrangement": 1, "released_on_account_at": 1, "released_on_account_by_name": 1,
-         "on_account_payment_term": 1},
+         "on_account_payment_term": 1, "pbc_approved_at": 1, "pbc_approved_by_name": 1, "is_sample": 1},
     )
     ticket_out = None
     if ticket:
@@ -1338,6 +1342,11 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "released_on_account_at": ticket.get("released_on_account_at"),
             "released_on_account_by_name": ticket.get("released_on_account_by_name"),
             "on_account_payment_term": ticket.get("on_account_payment_term"),
+            # 8.69 — pay before collection (no deposit, paid in full before
+            # the customer is told the order is ready).
+            "pbc_approved_at": ticket.get("pbc_approved_at"),
+            "pbc_approved_by_name": ticket.get("pbc_approved_by_name"),
+            "is_sample": bool(ticket.get("is_sample")),
             # Recurring occurrence review (2026-08-27) — lets OrderPassport.js
             # show a dedicated Accept/Decline card in place of the generic
             # Confirm/Cancel buttons when this order is a still-pending
@@ -1371,7 +1380,9 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
          "collected_by": 1, "collected_at": 1,
          "completed_at": 1, "incomplete_reason": 1, "updated_at": 1,
          "queued_at": 1, "invoice_id": 1,
-         "invoice_creation_error": 1, "invoice_creation_failed_at": 1},
+         "invoice_creation_error": 1, "invoice_creation_failed_at": 1,
+         "payment_hold": 1, "payment_hold_at": 1, "payment_hold_amount": 1,
+         "collection_released_at": 1, "customer_notified_at": 1},
     )
     packing_out = None
     if packing_entry:
@@ -1399,6 +1410,12 @@ async def get_order_passport(order_id: str, current_user: dict = Depends(get_cur
             "invoice_id":       packing_entry.get("invoice_id"),
             "invoice_creation_error": packing_entry.get("invoice_creation_error"),
             "invoice_creation_failed_at": _dt(packing_entry.get("invoice_creation_failed_at")),
+            # 8.69 — the customer's "ready" notice is held until paid.
+            "payment_hold":   bool(packing_entry.get("payment_hold")),
+            "payment_hold_at": _dt(packing_entry.get("payment_hold_at")),
+            "payment_hold_amount": packing_entry.get("payment_hold_amount"),
+            "collection_released_at": _dt(packing_entry.get("collection_released_at")),
+            "customer_notified_at": _dt(packing_entry.get("customer_notified_at")),
             **board_entry_age_fields(packing_entry),
         }
 
@@ -2008,6 +2025,7 @@ async def _send_order_confirmation_email(
     owning_reseller_id: Optional[str],
     background_tasks: BackgroundTasks,
     force_deposit: bool = False,
+    pay_before_collection: bool = False,
 ) -> Optional[str]:
     """The customer's order-confirmed email, with Odoo's pro-forma attached.
     Returns a warning string on failure, never raises — the order is already
@@ -2022,7 +2040,10 @@ async def _send_order_confirmation_email(
     read); the full credit check happens at release time.
 
     The owning reseller (customer_ownership, the same lookup commission uses)
-    is CC'd, whoever placed the order (2026-08-21)."""
+    is CC'd, whoever placed the order (2026-08-21).
+
+    pay_before_collection=True (8.69) sends the "no deposit, pay in full
+    before collection" version, used when Finance approves that arrangement."""
     try:
         odoo = get_odoo_client()
         _p_rows = odoo.read("res.partner", [partner[0]], fields=["email", "commercial_partner_id"])
@@ -2032,7 +2053,7 @@ async def _send_order_confirmation_email(
         _cp = _p_rows[0].get("commercial_partner_id") if _p_rows else None
         _commercial_id = _cp[0] if _cp else partner[0]
 
-        _terms = None if force_deposit else await get_account_terms(_commercial_id)
+        _terms = None if (force_deposit or pay_before_collection) else await get_account_terms(_commercial_id)
         _account_terms_email = bool(_terms) and is_approved_for_company(_terms, company_id)
 
         # 'sale.report_saleorder_pro_forma' — NOT '..._pro_forma_invoice'
@@ -2055,7 +2076,9 @@ async def _send_order_confirmation_email(
             cc=[_reseller_email_cc] if _reseller_email_cc else None,
             support_url=order_help_url(order_id),
         )
-        if _account_terms_email:
+        if pay_before_collection:
+            background_tasks.add_task(send_order_confirmed_pay_before_collection, **common)
+        elif _account_terms_email:
             background_tasks.add_task(
                 send_order_confirmed_account_terms,
                 payment_term_name=_terms.get("payment_term_name") or "your account terms",

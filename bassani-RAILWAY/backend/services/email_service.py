@@ -435,6 +435,114 @@ def send_order_confirmed_account_terms(
     )
 
 
+def send_order_confirmed_pay_before_collection(
+    customer_email: str,
+    customer_name: str,
+    order_ref: str,
+    order_total: float,
+    pdf_bytes: bytes,
+    cc: "list[str] | None" = None,
+    support_url: str = None,
+) -> None:
+    """8.69 — sent when Finance approves an order to go ahead with no deposit,
+    paid in full before collection. The customer already received the 50%
+    deposit pro-forma at confirm time, so this replaces that ask: no deposit,
+    the full amount is due before collection, and here is how to pay it."""
+    if not customer_email:
+        return
+    body = (
+        _h1("No deposit needed for your order")
+        + _p(f"Hi {customer_name},")
+        + _p("Good news: we will start preparing your order without a deposit. The full "
+             "amount is payable before collection. Your pro-forma invoice is attached.")
+        + _info_box([
+            ("Order reference", f"<strong>{order_ref}</strong>"),
+            ("Amount payable before collection",
+             f'<strong style="font-size:16px;color:#0f6e56;">R{order_total:,.2f}</strong>'),
+        ], tint="#f0fdf9", border="#bbf7d0")
+        + _p(f"You can pay now, or once you receive your invoice. Please make payment to "
+             f"{settings.bank_name}, account number {settings.bank_account}, branch code "
+             f"{settings.bank_branch}, using <strong>{order_ref}</strong> as your payment reference.")
+        + _divider()
+        + _p("Once your order is packed and your payment has been received, we will let you "
+             "know it is ready to collect.", muted=True)
+        + _support_line(support_url)
+    )
+    _send(
+        customer_email, f"No Deposit Needed, Pay Before Collection: {order_ref}",
+        _wrap(body), attachments=[{
+            "filename": f"{order_ref} Pro-Forma Invoice.pdf",
+            "content": list(pdf_bytes),
+        }],
+        cc=cc or None,
+    )
+
+
+def send_payment_hold_finance(
+    to_emails: "list[str]",
+    customer_name: str,
+    order_ref: str,
+    invoice_ref: str,
+    amount_due: "float | None",
+    arrangement: str,
+) -> None:
+    """8.69 — an order has been packed and signed off but its invoice isn't
+    paid, so the customer's "ready for collection" email is being held.
+    Tells Finance which payment to look out for."""
+    if not to_emails:
+        return
+    arrangement_label = "Pay before collection" if arrangement == "pay_before_collection" else "Deposit paid, balance due"
+    body = (
+        _h1("Order packed, waiting on payment")
+        + _p("An order has passed QA and RP sign-off but still has an amount owing. "
+             "The customer will be told it is ready to collect automatically once the "
+             "payment is recorded.")
+        + _info_box([
+            ("Customer", f"<strong>{customer_name}</strong>"),
+            ("Order", order_ref),
+            ("Invoice", invoice_ref or "Not yet raised"),
+            ("Amount due", f"<strong>R{amount_due:,.2f}</strong>" if amount_due is not None
+             else "To be confirmed once the invoice is raised"),
+            ("Arrangement", arrangement_label),
+        ], tint="#fffbeb", border="#fde68a")
+        + _button("Open Expected Payments", f"{settings.portal_url}/tickets/expected-payments")
+        + _divider()
+        + _p("Payments recorded on the ticket, on the Invoices page, through bank "
+             "reconciliation, or directly in the accounting system are all picked up.", muted=True)
+    )
+    _send(to_emails, f"Awaiting Payment Before Collection: {order_ref} ({customer_name})", _wrap(body))
+
+
+def send_payment_hold_digest(to_emails: "list[str]", items: list) -> None:
+    """8.69 — morning digest of packed orders that have been waiting on payment
+    for 3 days or more. items: [{customer_name, order_ref, amount_due, days}]."""
+    if not to_emails or not items:
+        return
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 0;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;">'
+        f'{_html.escape(i.get("customer_name") or "")}</td>'
+        f'<td style="padding:8px 0 8px 12px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">'
+        f'{_html.escape(i.get("order_ref") or "")}</td>'
+        f'<td style="padding:8px 0 8px 12px;font-size:13px;color:#0f172a;text-align:right;'
+        f'border-bottom:1px solid #f1f5f9;white-space:nowrap;">R{float(i.get("amount_due") or 0):,.2f}</td>'
+        f'<td style="padding:8px 0 8px 12px;font-size:13px;color:{"#dc2626" if i.get("days", 0) >= 7 else "#d97706"};'
+        f'text-align:right;border-bottom:1px solid #f1f5f9;white-space:nowrap;">{i.get("days", 0)} days</td>'
+        f'</tr>'
+        for i in items
+    )
+    count = len(items)
+    body = (
+        _h1(f"{count} packed order{'s' if count != 1 else ''} still waiting on payment")
+        + _p("These orders have passed QA and RP sign-off but the customer has not paid yet, "
+             "so they have not been told the order is ready. Orders waiting 7 days or more are shown in red.")
+        + '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">'
+        + rows + '</table>'
+        + _button("Open Expected Payments", f"{settings.portal_url}/tickets/expected-payments")
+    )
+    _send(to_emails, f"Payments Outstanding Before Collection: {count} order{'s' if count != 1 else ''}", _wrap(body))
+
+
 def send_quote_email(
     customer_email: str,
     customer_name: str,
@@ -482,6 +590,7 @@ def send_invoice_email(
     payment_reference: str = None,
     support_url: str = None,
     due_date: str = None,
+    collection_after_payment: bool = False,
 ) -> None:
     """Sent when the final delivery invoice is created and posted (after
     QA + RP sign-off, or a deliberate manual/resend send) — replaces the
@@ -496,10 +605,20 @@ def send_invoice_email(
     still gets the unpaid/pay-by-EFT wording, matching the common case.
     due_date (8.68, ISO date string, account.move.invoice_date_due) adds a
     Payment due row and wording when the invoice is still unpaid, which is
-    what an account-terms customer needs to know most."""
+    what an account-terms customer needs to know most.
+    collection_after_payment (8.69) — set for a deposit or pay-before-
+    collection order: when the invoice is still unpaid, says the order is
+    packed and that we'll confirm it's ready to collect once paid, since the
+    "ready for collection" email is held until then."""
     if not customer_email:
         return
     is_paid = payment_state in ("paid", "in_payment")
+    hold_line = ""
+    if collection_after_payment and not is_paid:
+        hold_line = _p(
+            "<strong>Your order has been packed.</strong> Once we have received payment of "
+            "this invoice, we will let you know it is ready to collect."
+        )
     due_display = None
     if due_date and not is_paid:
         try:
@@ -529,6 +648,7 @@ def send_invoice_email(
             ("Invoice number", f"<strong>{invoice_ref}</strong>"),
             ("Invoice total", f"R{amount_total:,.2f}"),
         ] + ([("Payment due", f"<strong>{due_display}</strong>")] if due_display else []))
+        + hold_line
         + payment_line
         + _divider()
         + (_support_line(support_url, "Have a question about this invoice?") if support_url
@@ -801,34 +921,51 @@ def send_release_request_notification(
     reason: str,
     ticket_id: str,
     has_account_terms: bool = False,
+    kind: str = "on_account",
 ) -> None:
-    """8.71 — a sales clerk asked for an order to be released on account (no
-    deposit). Sent to the release_request_to routing list. The decision is
+    """8.71 — a sales clerk asked for an order to go ahead without a deposit.
+    kind (8.69): "on_account" (release on account terms) or
+    "pay_before_collection" (pack now, customer pays in full before
+    collection). Sent to the release_request_to routing list. The decision is
     always made in the portal, never from the email."""
     if not to_emails:
         return
-    terms_line = (
-        "This customer already has account terms on record."
-        if has_account_terms else
-        "This customer has no account terms set up yet. You can approve terms and release, "
-        "release this order only, or decline and ask for a deposit."
-    )
+    if kind == "pay_before_collection":
+        headline = "Pay before collection requested"
+        ask = "Requested arrangement"
+        ask_value = "Pack now, customer pays in full before collection"
+        terms_line = ("Finance can approve pay before collection, release on account if the customer "
+                      "has terms, or decline and ask for a deposit.")
+        footer = "The order stays at Awaiting Deposit until Finance decides."
+    else:
+        headline = "Release on account requested"
+        ask = "Requested arrangement"
+        ask_value = "Release on account"
+        terms_line = (
+            "This customer already has account terms on record."
+            if has_account_terms else
+            "This customer has no account terms set up yet. You can approve terms and release, "
+            "release this order only, approve pay before collection, or decline and ask for a deposit."
+        )
+        footer = "The order stays at Awaiting Deposit until someone with release permission decides."
     body = (
-        _h1("Release on account requested")
+        _h1(headline)
         + _p(f"{requested_by} has asked for an order to go onto the packing board without a deposit.")
         + _info_box([
             ("Customer", f"<strong>{customer_name}</strong>"),
             ("Order", order_ref),
             ("Order total", f"R{order_total:,.2f}"),
+            (ask, ask_value),
             ("Requested by", requested_by),
             ("Reason", reason),
         ])
         + _p(terms_line)
         + _button("Review request", f"{settings.portal_url}/tickets/sales?ticket={ticket_id}")
         + _divider()
-        + _p("The order stays at Awaiting Deposit until someone with release permission decides.", muted=True)
+        + _p(footer, muted=True)
     )
-    _send(to_emails, f"Release on Account Requested: {customer_name}", _wrap(body))
+    subject = "Pay Before Collection Requested" if kind == "pay_before_collection" else "Release on Account Requested"
+    _send(to_emails, f"{subject}: {customer_name}", _wrap(body))
 
 
 def send_release_decision_notification(
@@ -850,7 +987,10 @@ def send_release_decision_notification(
                      "The order has been released on the customer's account terms and is on its way to the packing board."),
         "exception": ("Order released as a one-off",
                       "The order has been released without a deposit as a one-off exception and is on its way to the packing board."),
-        "declined": ("Release on account declined",
+        "pay_before_collection": ("Pay before collection approved",
+                                  "The order is on its way to the packing board with no deposit. The customer pays in full "
+                                  "before collection and will only be told it is ready once payment is received."),
+        "declined": ("No-deposit request declined",
                      "A deposit is still needed before this order can be packed."),
     }.get(decision, ("Release request decided", ""))
     body = (
@@ -1619,13 +1759,16 @@ def send_order_ready_for_collection_reseller(
     customer_name: str,
     reseller_name: str,
     cc: "list[str] | None" = None,
+    payment_received: bool = False,
 ) -> None:
-    """Sent to the reseller when their full order has passed QA and RP review and is ready."""
+    """Sent to the reseller when their full order has passed QA and RP review and is ready.
+    payment_received (8.69): the notice was held until the invoice was paid."""
     if not reseller_email:
         return
     body = (
         _h1("Your order is ready for collection")
         + _p(f"Hi {reseller_name},")
+        + (_p("Thank you, we have received payment for this order.") if payment_received else "")
         + _p(
             f"Your order for <strong>{customer_name}</strong> has been packed and cleared "
             "by our QA and Responsible Pharmacist. It is now ready for collection."
@@ -1652,17 +1795,20 @@ def send_order_ready_for_collection_customer(
     customer_name: str,
     cc: "list[str] | None" = None,
     support_url: str = None,
+    payment_received: bool = False,
 ) -> None:
     """Sent to the actual customer account (main company email, cc'd to every
     other contact on file) when their order is ready for collection —
     independent of send_order_ready_for_collection_reseller above, which only
     reaches a reseller who placed the order on the customer's behalf and does
-    nothing for a staff-placed order with no reseller attached."""
+    nothing for a staff-placed order with no reseller attached.
+    payment_received (8.69): the notice was held until the invoice was paid."""
     if not customer_email:
         return
     body = (
         _h1("Your order is ready for collection")
         + _p(f"Hi {customer_name},")
+        + (_p("Thank you, we have received your payment.") if payment_received else "")
         + _p(
             "Your order has been packed and cleared by our QA and Responsible "
             "Pharmacist. It is now ready for collection."
