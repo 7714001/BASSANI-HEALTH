@@ -405,7 +405,7 @@ def update_category(
             vals["parent_id"] = body.parent_id if body.parent_id else False
         if not vals:
             raise HTTPException(status_code=400, detail="Nothing to update")
-        odoo.execute("product.category", "write", [[category_id], vals])
+        odoo.write("product.category", [category_id], vals)
         return {"success": True}
     except HTTPException:
         raise
@@ -503,7 +503,7 @@ def update_uom(
 ):
     odoo = get_odoo_client()
     try:
-        odoo.execute("uom.uom", "write", [[uom_id], {"name": body.name}])
+        odoo.write("uom.uom", [uom_id], {"name": body.name})
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")
@@ -516,7 +516,7 @@ def archive_uom(
 ):
     odoo = get_odoo_client()
     try:
-        odoo.execute("uom.uom", "write", [[uom_id], {"active": False}])
+        odoo.write("uom.uom", [uom_id], {"active": False})
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

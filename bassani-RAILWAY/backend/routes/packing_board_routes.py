@@ -1300,7 +1300,17 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
             # unpicked amount for that specific move line before completion,
             # confirmed live across real assigned pickings.
             #
-            # qty_done must be written directly to each move line rather than
+            # Odoo 19 has no stored qty_done on stock.move.line (2026-10-13,
+            # live-checked: qty_done is a non-stored compatibility field). The
+            # amount being delivered is the move line's own `quantity`, and a
+            # line only counts towards this delivery once `picked` is True;
+            # unpicked lines are left for the backorder. Written through
+            # OdooClient.write() — execute(model, "write", [[id], vals]) wraps
+            # the args in one list too many, so Odoo saw write([[id], vals])
+            # and every Mark Complete since 2026-09-08 failed here (Sentry
+            # #153357473, caught by the 6.6 drift alerting).
+            #
+            # quantities must be written directly to each move line rather than
             # via Odoo's old "Set" convenience button — there is no
             # 'action_set_quantities_to_reservation' method on this Odoo 19
             # instance at all (2026-09-08, root cause of Sentry #143212165 /
@@ -1331,12 +1341,14 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
                     for ml in mls:
                         reserved = float(ml.get("quantity", 0))
                         take = reserved if remaining is None else min(remaining, reserved)
-                        _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": take}])
+                        # A fully short line stays unpicked so it goes to the backorder
+                        _odoo.write("stock.move.line", [ml["id"]],
+                                    {"quantity": take, "picked": True} if take > 0 else {"picked": False})
                         if remaining is not None:
                             remaining = max(0.0, remaining - take)
             else:
                 for ml in move_lines:
-                    _odoo.execute("stock.move.line", "write", [[ml["id"]], {"qty_done": float(ml.get("quantity", 0))}])
+                    _odoo.write("stock.move.line", [ml["id"]], {"picked": True})
             result = _odoo.execute("stock.picking", "button_validate", [pid])
             if isinstance(result, dict) and result.get("res_model") == "stock.backorder.confirmation":
                 # Partial reservation — ask Odoo to auto-create a backorder,
