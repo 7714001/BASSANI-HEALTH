@@ -1488,6 +1488,31 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
             if _existing[0]["state"] == "draft":
                 odoo.execute("account.move", "action_post", [invoice_id])
         else:
+            # Never invoice before something is delivered (2026-10-13, found
+            # live on S01191). With nothing delivered, the only thing left to
+            # invoice is the deposit deduction, which is negative, so Odoo
+            # creates a draft CREDIT NOTE for the deposit instead of an
+            # invoice. That draft then counts as the deduction, so the real
+            # invoice created after delivery charged the full amount again.
+            # Guarded here so every caller (Mark Complete, Retry, the
+            # reconciliation wizard) is covered.
+            try:
+                _lines = odoo.search_read(
+                    "sale.order.line",
+                    [("order_id", "=", sale_order_id), ("display_type", "=", False),
+                     ("is_downpayment", "=", False)],
+                    ["qty_to_invoice"],
+                )
+                _to_invoice = sum(float(l.get("qty_to_invoice") or 0) for l in _lines)
+            except Exception:
+                _to_invoice = None  # can't tell; the credit-note check below still protects
+            if _to_invoice is not None and _to_invoice <= 0:
+                return {
+                    "invoice_id": None, "invoice_name": None,
+                    "invoice_warning": ("Nothing has been delivered yet, so there is nothing to invoice. "
+                                        "The delivery must be validated in Odoo first."),
+                    "invoice_sent": False,
+                }
             wiz_id = odoo.create(
                 "sale.advance.payment.inv",
                 {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
@@ -1544,6 +1569,18 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
             if _new_ids:
                 try:
                     _new_rows = odoo.read("account.move", list(_new_ids), fields=["id", "name", "move_type", "state"])
+                    # A credit note here means Odoo found a negative amount to
+                    # invoice (see the guard above). Delete the draft we just
+                    # caused rather than leave it to swallow the deposit.
+                    _stray = [r["id"] for r in _new_rows if r.get("move_type") == "out_refund" and r.get("state") == "draft"]
+                    if _stray:
+                        odoo.unlink("account.move", _stray)
+                        return {
+                            "invoice_id": None, "invoice_name": None,
+                            "invoice_warning": ("Odoo produced a credit note instead of an invoice (nothing delivered "
+                                                "beyond the deposit). It has been removed; validate the delivery and retry."),
+                            "invoice_sent": False,
+                        }
                     _new_out = sorted(
                         (r for r in _new_rows if r.get("move_type") == "out_invoice"),
                         key=lambda r: r["id"], reverse=True,
