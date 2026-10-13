@@ -30,11 +30,41 @@ if settings.jwt_secret == "change-me-in-production":
     )
 
 import sentry_sdk
+
+_SENTRY_SECRETS = [s for s in (settings.odoo_password, settings.jwt_secret, settings.resend_api_key,
+                               settings.ms_client_secret, settings.imap_password, settings.smtp_password,
+                               settings.super_admin_password) if s and len(s) >= 6]
+
+
+def _scrub_secrets(value):
+    """Replace any configured secret wherever it appears in a Sentry event."""
+    if isinstance(value, str):
+        for secret in _SENTRY_SECRETS:
+            if secret in value:
+                value = value.replace(secret, "[redacted]")
+        return value
+    if isinstance(value, dict):
+        return {k: _scrub_secrets(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub_secrets(v) for v in value]
+    return value
+
+
+def _sentry_before_send(event, hint):
+    return _scrub_secrets(event)
+
+
 if settings.sentry_dsn:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         traces_sample_rate=0.0,   # errors only — no performance tracing quota used
         send_default_pii=False,
+        # Stack-frame local variables leaked the Odoo service password (the raw
+        # XML-RPC request body, Sentry #147852886) and each user's email and
+        # permissions. Frames and line numbers are still sent; variables aren't.
+        include_local_variables=False,
+        # Second line of defence: strip any configured secret from whatever is sent.
+        before_send=_sentry_before_send,
     )
     logger.info("sentry_initialised")
 
