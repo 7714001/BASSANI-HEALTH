@@ -18,6 +18,7 @@ import json
 import jwt
 import logging
 import re
+import xmlrpc.client
 from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends, HTTPException
@@ -1208,6 +1209,17 @@ async def rp_approve(
     return {"success": True}
 
 
+def _odoo_error_text(e: Exception) -> str:
+    """Readable one-line reason from an Odoo error. An XML-RPC Fault carries
+    Odoo's whole server traceback; only its last line ("TypeError: ...",
+    "UserError: ...") means anything to the Finance user who sees it in the
+    invoice banner (found 2026-10-13, Sentry #152634442)."""
+    if isinstance(e, xmlrpc.client.Fault):
+        lines = [ln.strip() for ln in str(e.faultString).splitlines() if ln.strip()]
+        return (lines[-1] if lines else str(e.faultString))[:300]
+    return str(e)[:300]
+
+
 def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = None,
                             cancel_backorder: bool = False) -> dict:
     """Validate all assigned stock.picking records linked to an Odoo sale order.
@@ -1386,7 +1398,7 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
             else:
                 errors.append(f"{pname}: not completed in Odoo (state: {(_state or [{}])[0].get('state', 'unknown')})")
         except Exception as e:
-            errors.append(f"{pname}: {e}")
+            errors.append(f"{pname}: {_odoo_error_text(e)}")
 
     if errors and not validated:
         return {"success": False, "pickings": [], "error": "; ".join(errors), **_no_backorder}

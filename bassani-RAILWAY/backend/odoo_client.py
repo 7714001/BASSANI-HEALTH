@@ -119,7 +119,10 @@ def _report_schema_drift(model: str, method: str, fault: xmlrpc.client.Fault) ->
     _drift_reported.add((model, method, kind))
     # Last meaningful line of Odoo's traceback, e.g. "ValueError: Invalid field 'x' on 'y'"
     summary = next((ln.strip() for ln in reversed(text.splitlines()) if ln.strip()), text)[:300]
-    logger.error("odoo_schema_drift model=%s method=%s kind=%s detail=%s", model, method, kind, summary)
+    # warning, not error: Sentry's logging integration turns every error-level
+    # log into its own event, which duplicated the tagged capture_message below
+    # (two issues per drift, e.g. Sentry #153357473 / #153357477).
+    logger.warning("odoo_schema_drift model=%s method=%s kind=%s detail=%s", model, method, kind, summary)
     try:
         import sentry_sdk
         with sentry_sdk.push_scope() as scope:
