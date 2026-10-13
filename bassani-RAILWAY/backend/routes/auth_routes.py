@@ -38,7 +38,7 @@ class VerifyOtpBody(BaseModel):
 
 def _user_payload(user: dict) -> dict:
     """Build the public user object returned by login and /me."""
-    return {
+    payload = {
         "id":            user["id"],
         "username":      user["username"],
         "role":          user.get("role"),
@@ -61,10 +61,17 @@ def _user_payload(user: dict) -> dict:
         "is_super_admin": bool(user.get("is_super_admin", False)),
         "permissions":   user.get("permissions") or {},
         "warehouse_id":        user.get("warehouse_id"),
-        "active_warehouse_id": user.get("active_warehouse_id"),
         "must_change_password": bool(user.get("must_change_password", False)),
         "commission_eligible": bool(user.get("commission_eligible", True)),
     }
+    # Only sent once the user has used the switcher: null then means an
+    # explicit "All warehouses", while absent means never set, so the
+    # switcher shows the warehouse resolve_warehouse_id() actually falls back
+    # to. Always sending it made a never-set switcher read "All warehouses"
+    # while stock was scoped to the default warehouse (2026-10-13).
+    if "active_warehouse_id" in user:
+        payload["active_warehouse_id"] = user["active_warehouse_id"]
+    return payload
 
 
 async def create_password_reset_token(username: str, ttl_minutes: int = 15) -> str:

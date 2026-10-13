@@ -642,10 +642,12 @@ function WarehouseSwitcher() {
   if (user?.role === "reseller" || user?.role === "customer") return null;
   if (warehouses.length === 0) return null;
 
-  // null = user explicitly chose "All warehouses"; undefined = never set (show global default as hint)
+  // null = user explicitly chose "All warehouses"; undefined = never set, so
+  // show what the backend actually falls back to (resolve_warehouse_id):
+  // the user's pinned warehouse, then the global default.
   const effectiveValue = user?.active_warehouse_id !== undefined
     ? (user.active_warehouse_id ?? "")
-    : (defaultWarehouseId ?? "");
+    : (user?.warehouse_id ?? defaultWarehouseId ?? "");
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600">

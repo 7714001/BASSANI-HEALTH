@@ -208,7 +208,7 @@ def _product_stock(odoo, product_ids: list, warehouse_id: int) -> dict:
     if not product_ids:
         return {}
     rows = odoo.read("product.product", product_ids, fields=["qty_available", "free_qty"],
-                     context={"warehouse": warehouse_id})
+                     context={"warehouse_id": warehouse_id})
     return {r["id"]: {"on_hand": _f(r.get("qty_available")), "free": _f(r.get("free_qty"))} for r in rows}
 
 

@@ -5,7 +5,7 @@ import calendar as _cal
 from auth import get_current_user, require_admin
 from odoo_client import get_odoo_client, odoo_execute_kw
 from database import col, NO_ID
-from warehouse_context import odoo_context
+from warehouse_context import odoo_context, resolve_warehouse_id
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -88,7 +88,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     today = date.today()
     month_start = first_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
     month_end = last_day_of_month(today.year, today.month).strftime("%Y-%m-%d")
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     ctx = odoo_context(warehouse_id)
 
     try:
@@ -98,12 +98,12 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
         )
         low_stock = odoo.count(
             "product.product",
-            [("type", "=", "product"), ("virtual_available", "<", 10), ("active", "=", True)],
+            [("is_storable", "=", True), ("virtual_available", "<", 10), ("active", "=", True)],
             context=ctx,
         )
         low_stock_products = odoo.search_read(
             "product.product",
-            domain=[("type", "=", "product"), ("virtual_available", "<", 10), ("active", "=", True)],
+            domain=[("is_storable", "=", True), ("virtual_available", "<", 10), ("active", "=", True)],
             fields=["id", "name", "virtual_available", "uom_id", "categ_id"],
             limit=5,
             order="name asc",
@@ -430,7 +430,7 @@ async def monthly_turnover(
     Accepts either year/month or from_date/to_date (ISO date strings) for range mode.
     """
     odoo = get_odoo_client()
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -555,7 +555,7 @@ async def best_sellers(
 ):
     """Top products by revenue — pulled from Odoo sale order lines."""
     odoo = get_odoo_client()
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -624,7 +624,7 @@ async def best_customers(
 ):
     """Top customers by spend — pulled from Odoo sale orders."""
     odoo = get_odoo_client()
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -761,7 +761,7 @@ def _discount_rows(odoo, domain: list, groupby: str, limit: Optional[int] = 50) 
 
 async def _discount_report(current_user: dict, groupby: str, year, month, from_date, to_date) -> list:
     _from, _to = _discount_period_bounds(year, month, from_date, to_date)
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     odoo = get_odoo_client()
     domain = _sale_report_domain(_from, _to, warehouse_id)
     try:
@@ -844,7 +844,7 @@ async def discount_orders(
     with the same Approved in portal / Not via approval split."""
     _from, _to = _discount_period_bounds(year, month, from_date, to_date)
     field = "product_id" if dimension == "product" else "commercial_partner_id"
-    domain = _sale_report_domain(_from, _to, current_user.get("active_warehouse_id")) + [(field, "=", id)]
+    domain = _sale_report_domain(_from, _to, await resolve_warehouse_id(current_user)) + [(field, "=", id)]
     groupby = ["order_reference", "name", "commercial_partner_id"]
     measures = ["discount_amount:sum", "price_subtotal:sum", "nbr:sum", "date:max"]
     limit = 200
@@ -905,13 +905,13 @@ async def dead_stock(
     """
     odoo = get_odoo_client()
     cutoff = (date.today() - timedelta(days=days_threshold)).strftime("%Y-%m-%d")
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
 
     try:
         # Products with stock (per-variant so cross-variant aggregation can't hide shortages)
         products = odoo.search_read(
             "product.product",
-            domain=[("type", "=", "product"), ("virtual_available", ">", 0), ("active", "=", True)],
+            domain=[("is_storable", "=", True), ("virtual_available", ">", 0), ("active", "=", True)],
             fields=["id", "name", "default_code", "virtual_available", "categ_id", "uom_id"],
             limit=500,
             context=odoo_context(warehouse_id),
@@ -971,7 +971,7 @@ async def category_performance(
 ):
     """Revenue and order count broken down by product category."""
     odoo = get_odoo_client()
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
     today = date.today()
     if from_date and to_date:
         _from, _to = from_date, to_date
@@ -1053,7 +1053,7 @@ async def best_resellers_report(
     else:
         fy_start, fy_end, fy_label = financial_year_bounds(today)
     odoo = get_odoo_client()
-    warehouse_id = current_user.get("active_warehouse_id")
+    warehouse_id = await resolve_warehouse_id(current_user)
 
     try:
         # Per-reseller FY aggregates from order_commissions

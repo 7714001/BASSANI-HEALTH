@@ -21,25 +21,33 @@ async def demand_forecast(weeks_history: int = 12, current_user: dict = Depends(
     since = (datetime.now(timezone.utc) - timedelta(weeks=weeks_history)).strftime("%Y-%m-%d")
     warehouse_id = await resolve_warehouse_id(current_user)
 
-    # Get confirmed order lines from Odoo
+    # Confirmed order lines, from the same warehouse the stock is read for
+    # (no filter on "All warehouses").
+    line_domain = [["order_id.state","in",["sale","done"]],["order_id.date_order",">=",since]]
+    if warehouse_id:
+        line_domain.append(["order_id.warehouse_id","=",warehouse_id])
     lines = odoo_execute_kw("sale.order.line", "search_read",
-        [[["order_id.state","in",["sale","done"]],["order_id.date_order",">=",since]]],
+        [line_domain],
         {"fields":["product_id","product_uom_qty","order_id"],"limit":2000})
 
-    # Get current stock
-    products = odoo_execute_kw("product.template","search_read",
-        [[["type","=","product"],["active","=",True]]],
-        {"fields":["id","name","qty_available","virtual_available"],"limit":200,
-         **({"context": odoo_context(warehouse_id)} if warehouse_id else {})})
-
-    prod_map = {p["id"]: p for p in products}
-
-    # Aggregate weekly velocity per product
+    # Aggregate weekly velocity per product variant
     velocity: dict = {}
     for line in lines:
         pid = line["product_id"][0] if line.get("product_id") else None
         if not pid: continue
         velocity[pid] = velocity.get(pid, 0) + line["product_uom_qty"]
+
+    # Current stock for exactly those variants. Read on product.product, not
+    # product.template: sale.order.line.product_id is a variant id, so the
+    # old template read never matched anything (and filtered on
+    # type = "product", which Odoo 18+ no longer has; stock-tracked products
+    # are is_storable = True). Fixed 2026-10-13.
+    products = odoo_execute_kw("product.product","search_read",
+        [[["id","in",list(velocity)],["is_storable","=",True]]],
+        {"fields":["id","display_name","qty_available","virtual_available"],
+         **({"context": odoo_context(warehouse_id)} if warehouse_id else {})}) if velocity else []
+
+    prod_map = {p["id"]: p for p in products}
 
     forecasts = []
     for pid, total_sold in velocity.items():
@@ -52,7 +60,7 @@ async def demand_forecast(weeks_history: int = 12, current_user: dict = Depends(
         recommended_qty = round(weekly_velocity * 4)  # 4 weeks buffer
         forecasts.append({
             "product_id":         pid,
-            "product_name":       prod["name"],
+            "product_name":       prod["display_name"],
             "current_stock":      stock,
             "weekly_velocity":    round(weekly_velocity, 1),
             "days_until_stockout": days_until_out,

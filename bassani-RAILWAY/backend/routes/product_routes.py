@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import base64
 from auth import get_current_user, require_admin, require_permission
 from odoo_client import get_odoo_client
-from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id
+from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, warehouse_location_id
 from middleware.audit import audit_log
 from database import col
 from parent_categories import resolve_parent_category_product_ids
@@ -1143,14 +1143,18 @@ async def set_stock_level(
 
 
 @router.get("/{product_id}/lots")
-def get_product_lots(product_id: int, location_id: Optional[int] = None, current_user: dict = Depends(get_current_user)):
+async def get_product_lots(product_id: int, location_id: Optional[int] = None, current_user: dict = Depends(get_current_user)):
     """Return in-stock lots for a product variant, with on-hand qty, UOM, and expiry date.
 
     `location_id` (optional) restricts to stock held under that location and
     its children — the packing board passes its delivery's source location so
     a packer can only pick a batch physically in the dispatching warehouse
-    (2026-10-07). Omitted, every internal location is included, as before."""
+    (2026-10-07). Omitted, it defaults to the caller's resolved warehouse
+    (every warehouse only on "All warehouses") — 2026-10-13, previously every
+    internal location in every warehouse."""
     odoo = get_odoo_client()
+    if not location_id:
+        location_id = warehouse_location_id(odoo, await resolve_warehouse_id(current_user))
     domain = [
         ("product_id", "=", product_id),
         ("location_id.usage", "=", "internal"),

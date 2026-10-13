@@ -1767,7 +1767,7 @@ async def create_order(
     # Resolved once — used both for the stock check below and to tag the order
     # with the warehouse it should draw from (the reseller's assigned vault,
     # staff's fixed vault, or the admin's active top-nav selection).
-    warehouse_id = await resolve_warehouse_id(current_user)
+    warehouse_id = await resolve_warehouse_id(current_user, for_write=True)
 
     if current_user.get("role") == "reseller":
         reseller_profile = await col("resellers").find_one(
