@@ -39,8 +39,8 @@ async def record_payment(p: PaymentIn, current_user: dict = Depends(require_admi
                 "amount": p.amount,
                 "date": p.payment_date,
                 "journal_id": journal_id[0],
-                "ref": p.reference or p.invoice_num,
-                "memo": p.notes,
+                # Odoo 18+ removed account.payment.ref; memo replaces it.
+                "memo": p.reference or p.invoice_num or p.notes,
             }
             pay_id = odoo_execute_kw("account.payment","create",[[payment_vals]])
             odoo_execute_kw("account.payment","action_post",[[pay_id]])

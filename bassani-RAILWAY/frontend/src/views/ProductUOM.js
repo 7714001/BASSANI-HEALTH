@@ -9,19 +9,14 @@ import {
 
 export default function ProductUOM() {
   const [uoms, setUoms]             = useState([]);
-  const [uomCats, setUomCats]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [archiveConfirm, setArchiveConfirm] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [uomRes, catRes] = await Promise.all([
-        api.get("/api/products/uoms"),
-        api.get("/api/products/uom-categories"),
-      ]);
+      const uomRes = await api.get("/api/products/uoms");
       setUoms(uomRes.data.uoms || []);
-      setUomCats(catRes.data.uom_categories || []);
     } catch { toast.error("Failed to load units of measure"); }
     finally { setLoading(false); }
   }, []);
@@ -30,32 +25,34 @@ export default function ProductUOM() {
   // ── Modal state ──────────────────────────────────────────────────────────
   const [modal, setModal]   = useState(null); // null | "create" | "edit"
   const [editing, setEditing] = useState(null);
-  const [form, setForm]     = useState({ name: "", category_id: "", factor: "1", uom_type: "bigger" });
+  // Each unit is either its own reference unit, or "contains N of" another
+  // unit (Odoo 19 removed UoM categories).
+  const [form, setForm]     = useState({ name: "", relative_uom_id: "", relative_factor: "1" });
   const [saving, setSaving] = useState(false);
 
   const openCreate = () => {
-    setForm({ name: "", category_id: uomCats[0]?.id?.toString() || "", factor: "1", uom_type: "bigger" });
+    setForm({ name: "", relative_uom_id: "", relative_factor: "1" });
     setEditing(null);
     setModal("create");
   };
 
   const openEdit = (u) => {
-    setForm({ name: u.name, category_id: u.category_id?.[0]?.toString() || "", factor: "1", uom_type: "bigger" });
+    setForm({ name: u.name, relative_uom_id: "", relative_factor: "1" });
     setEditing(u);
     setModal("edit");
   };
 
   const save = async () => {
     if (!form.name.trim()) return toast.error("Name is required");
-    if (modal === "create" && !form.category_id) return toast.error("Select a UOM category");
+    if (modal === "create" && form.relative_uom_id && !(parseFloat(form.relative_factor) > 0))
+      return toast.error("Enter how many it contains (more than 0)");
     setSaving(true);
     try {
       if (modal === "create") {
         await api.post("/api/products/uoms", {
           name: form.name.trim(),
-          category_id: parseInt(form.category_id),
-          factor: parseFloat(form.factor) || 1,
-          uom_type: form.uom_type,
+          relative_uom_id: form.relative_uom_id ? parseInt(form.relative_uom_id) : null,
+          relative_factor: form.relative_uom_id ? parseFloat(form.relative_factor) : 1,
         });
         toast.success("Unit of measure created");
       } else {
@@ -80,13 +77,17 @@ export default function ProductUOM() {
     } catch (e) { toast.error(e.response?.data?.detail || "Archive failed"); }
   };
 
-  // Group UOMs by their category for display
+  // Group each unit under the reference unit it's defined from; a reference
+  // unit heads its own group.
   const grouped = uoms.reduce((acc, u) => {
-    const catName = u.category_id?.[1] || "Uncategorised";
-    if (!acc[catName]) acc[catName] = [];
-    acc[catName].push(u);
+    const group = u.relative_uom_id?.[1] || u.name;
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(u);
     return acc;
   }, {});
+  const definedAs = (u) => u.relative_uom_id
+    ? `Contains ${Number(u.relative_factor)} ${u.relative_uom_id[1]}`
+    : "Reference unit";
 
   const noUoms = uoms.length === 0;
 
@@ -120,8 +121,8 @@ export default function ProductUOM() {
                     { accessorKey: "name", header: "Unit", cell: ({ row: { original: u } }) => (
                       <span className="font-medium text-gray-900">{u.name}</span>
                     )},
-                    { id: "cat", header: "Category", cell: ({ row: { original: u } }) => (
-                      <Badge color="gray">{u.category_id?.[1] || "—"}</Badge>
+                    { id: "defined", header: "Defined as", cell: ({ row: { original: u } }) => (
+                      <Badge color="gray">{definedAs(u)}</Badge>
                     )},
                     { id: "actions", header: "", cell: ({ row: { original: u } }) => (
                       <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
@@ -159,29 +160,27 @@ export default function ProductUOM() {
 
           {modal === "create" && (
             <>
-              <FormGroup label="UOM Category" required>
-                <Select value={form.category_id} onChange={e => setForm({ ...form, category_id: e.target.value })}>
-                  <option value="">— Select category —</option>
-                  {uomCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <FormGroup label="Based on">
+                <Select value={form.relative_uom_id} onChange={e => setForm({ ...form, relative_uom_id: e.target.value })}>
+                  <option value="">Nothing, this is a new reference unit</option>
+                  {uoms.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </Select>
               </FormGroup>
-              <FormGroup label="Conversion factor">
-                <Input
-                  type="number"
-                  step="0.001"
-                  value={form.factor}
-                  onChange={e => setForm({ ...form, factor: e.target.value })}
-                />
-              </FormGroup>
-              <FormGroup label="Type">
-                <Select value={form.uom_type} onChange={e => setForm({ ...form, uom_type: e.target.value })}>
-                  <option value="bigger">Bigger than reference</option>
-                  <option value="smaller">Smaller than reference</option>
-                </Select>
-              </FormGroup>
+              {form.relative_uom_id && (
+                <FormGroup label="How many does it contain?" required>
+                  <Input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    value={form.relative_factor}
+                    onChange={e => setForm({ ...form, relative_factor: e.target.value })}
+                  />
+                </FormGroup>
+              )}
               <p className="text-xs text-gray-400 mt-1 mb-3">
-                Each UOM category has one reference unit. New units are defined relative
-                to it using the conversion factor above.
+                {form.relative_uom_id
+                  ? `One ${form.name.trim() || "new unit"} contains ${form.relative_factor || "?"} ${uoms.find(u => String(u.id) === form.relative_uom_id)?.name || ""}. For example, a Box based on Unit that contains 10.`
+                  : "A reference unit stands on its own. Other units can then be defined from it."}
               </p>
             </>
           )}

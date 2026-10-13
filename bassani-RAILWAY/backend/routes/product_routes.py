@@ -82,10 +82,11 @@ class CategoryUpdate(BaseModel):
     parent_id: Optional[int] = None
 
 class UOMCreate(BaseModel):
+    # Odoo 19 has no UoM categories: a unit is "contains relative_factor of
+    # relative_uom_id", or a reference unit of its own when that is unset.
     name: str
-    category_id: int
-    factor: float = 1.0
-    uom_type: str = "bigger"    # reference | bigger | smaller
+    relative_uom_id: Optional[int] = None
+    relative_factor: float = 1.0
 
 class UOMUpdate(BaseModel):
     name: str
@@ -455,40 +456,18 @@ def list_taxes(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
 
 
-@router.get("/uom-categories")
-def list_uom_categories(current_user: dict = Depends(get_current_user)):
-    """UOM category groups (e.g. Unit, Weight, Volume) — used to populate the
-    category picker when creating a new unit of measure. Returns empty list when
-    UOM is not enabled in Odoo rather than raising an error."""
-    odoo = get_odoo_client()
-    try:
-        cats = odoo.search_read(
-            "uom.category",
-            domain=[],
-            fields=["id", "name"],
-            limit=100,
-            order="name asc",
-        )
-        return {"uom_categories": cats}
-    except Exception as e:
-        logger.warning("uom_categories_fetch_failed error=%s", e)
-        return {"uom_categories": []}
-
-
 @router.get("/uoms")
 def list_uoms(current_user: dict = Depends(get_current_user)):
     """Available Odoo Units of Measure — populates the UOM dropdown on the product form.
     Returns empty list when UOM is not enabled in Odoo rather than raising an error.
-    fields intentionally omits category_id: this Odoo instance doesn't have that
-    field on uom.uom at all (confirmed live — a newer/reconfigured Odoo schema
-    than the field assumed), and the frontend dropdown only ever reads id/name
-    anyway, so there was nothing depending on it."""
+    Odoo 19 removed UoM categories (uom.category, uom.uom.category_id/uom_type);
+    a unit is defined relative to another via relative_uom_id/relative_factor."""
     odoo = get_odoo_client()
     try:
         uoms = odoo.search_read(
             "uom.uom",
             domain=[("active", "=", True)],
-            fields=["id", "name"],
+            fields=["id", "name", "relative_uom_id", "relative_factor"],
             limit=200,
             order="name asc",
         )
@@ -503,14 +482,14 @@ def create_uom(
     body: UOMCreate,
     current_user: dict = Depends(require_admin),
 ):
+    if body.relative_factor <= 0:
+        raise HTTPException(status_code=400, detail="The quantity it contains must be more than 0")
     odoo = get_odoo_client()
     try:
-        uom_id = odoo.create("uom.uom", {
-            "name": body.name,
-            "category_id": body.category_id,
-            "factor": body.factor,
-            "uom_type": body.uom_type,
-        })
+        vals = {"name": body.name, "relative_factor": body.relative_factor}
+        if body.relative_uom_id:
+            vals["relative_uom_id"] = body.relative_uom_id
+        uom_id = odoo.create("uom.uom", vals)
         return {"success": True, "id": uom_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

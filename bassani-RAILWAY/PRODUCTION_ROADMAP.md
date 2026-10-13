@@ -742,6 +742,14 @@ Resend is already integrated (`resend` in `requirements.txt`, `RESEND_API_KEY` i
 - [x] `degraded` (Odoo down, MongoDB up) returns HTTP 200 so Railway does not restart the container
 - [x] `down` (MongoDB unreachable) returns HTTP 503
 
+#### 6.6 Odoo Schema Drift Detection (2026-10-13)
+Two upgrade-drift bugs in one day (context key `warehouse` → `warehouse_id`, product type `product` removed), neither raising an error, showed the 2026-08-11 field audit wasn't enough: it only covered field names. Two layers now:
+- [x] **`backend/scripts/odoo_schema_audit.py`** (run from `backend/`, read-only): parses the backend source and checks every Odoo model, field (including dotted paths, `fields=`/`order=`/`read_group` lists, and nested `(0, 0, {...})` line writes), selection value in filters and writes, report name and context key against live Odoo; `--probe-methods` also checks every called method exists and isn't private (empty-recordset calls, no record touched). Exits 1 on drift, so it can gate CI. A stale value inside an `in` list that still matches on another value is a warning, not a failure.
+- [x] **Runtime alerting in `odoo_client.py::odoo()`**: every Odoo fault that looks like drift (invalid field/domain, missing method/model, private method, invalid selection value, changed signature) is logged as `odoo_schema_drift` and sent to Sentry once per model/method/kind per process, before any caller's `except: pass` can hide it. Deleted-record errors are excluded.
+- [x] First run fixed: Units of Measure screen (Odoo 19 removed UoM categories; rebuilt on `relative_uom_id`/`relative_factor`); vault writes (`move_ids_without_package` → `move_ids`, `lot_producing_id` → `lot_producing_ids`, `stock.move` has no `name`), would have failed the day `GACP_ODOO_WRITES` goes on; `odoo.call()` on a client with no such method (`/api/stock/adjustment`); `account.payment.ref` → `memo` (`/api/payments/record`); `state = "done"` count on sale orders (now `locked`).
+- [ ] Run the audit (with `--probe-methods`) after every Odoo upgrade, and before flipping `GACP_ODOO_WRITES` on
+- Known blind spots: 22 calls build the model name at runtime; drift in a context key the audit's list doesn't know about; wrong-but-valid names. Leftover `"done"` values in `state in ["sale", "done"]` filters are harmless and left in place.
+
 #### 6.5 Frontend to Cloudflare Pages
 - **Deferred** — for ~30 users the CDN benefit is negligible; adds deployment complexity with no meaningful gain at current scale. Revisit if traffic grows significantly.
 

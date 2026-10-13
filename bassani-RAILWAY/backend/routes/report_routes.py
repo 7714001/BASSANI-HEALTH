@@ -94,7 +94,7 @@ async def dashboard_stats(current_user: dict = Depends(get_current_user)):
     try:
         total_products = odoo.count(
             "product.template",
-            [("type", "in", ["product", "consu"]), ("active", "=", True)]
+            [("type", "=", "consu"), ("active", "=", True)]
         )
         low_stock = odoo.count(
             "product.product",

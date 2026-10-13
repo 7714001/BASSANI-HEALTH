@@ -230,7 +230,7 @@ async def order_stats(_: dict = Depends(get_current_user)):
         total     = odoo.count("sale.order", [])
         draft     = odoo.count("sale.order", [("state", "=", "draft")])
         confirmed = odoo.count("sale.order", [("state", "=", "sale")])
-        done      = odoo.count("sale.order", [("state", "=", "done")])
+        done      = odoo.count("sale.order", [("state", "=", "sale"), ("locked", "=", True)])  # Odoo 17+: "done" state replaced by locked
         cancelled = odoo.count("sale.order", [("state", "=", "cancel")])
 
         # Revenue — sum amount_total on confirmed + done orders

@@ -128,9 +128,8 @@ def odoo_context(warehouse_id: Optional[int], company_id: Optional[int] = None) 
     if warehouse_id:
         # Odoo 17+ reads `warehouse_id`; the old `warehouse` key is silently
         # ignored (live-verified on 19.0, 2026-10-13), which made every stock
-        # figure the sum of all the company's warehouses. Old key kept harmless.
+        # figure the sum of all the company's warehouses.
         ctx["warehouse_id"] = warehouse_id
-        ctx["warehouse"] = warehouse_id
     if company_id:
         ctx["company_id"] = company_id
         ctx["allowed_company_ids"] = [company_id]

@@ -125,7 +125,12 @@ def stock_adjustment(
                 "inventory_quantity": adj.quantity,
             },
         )
-        odoo.call("stock.quant", "action_apply_inventory", [quant_id])
+        try:
+            odoo.execute("stock.quant", "action_apply_inventory", [quant_id])  # OdooClient has no .call()
+        except Exception as e:
+            # Odoo 19 applies the count, then fails to send its None reply.
+            if "cannot marshal None" not in str(e):
+                raise
         return {"success": True, "quant_id": quant_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Odoo error: {str(e)}")

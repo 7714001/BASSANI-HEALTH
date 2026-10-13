@@ -87,6 +87,51 @@ def fetch_report_pdf(report_name: str, res_ids: list) -> bytes:
         )
     return resp.content
 
+# ── Schema-drift alerting ─────────────────────────────────────────────────
+# Odoo upgrades rename fields/methods/values; the resulting faults are often
+# swallowed by a caller's `except Exception: pass`, so the feature silently
+# shows nothing (reserved_availability 2026-08-11, _render_qweb_pdf
+# 2026-08-14). Every call passes through odoo(), so a fault that looks like
+# drift is reported here, before any caller can swallow it. Once per
+# (model, method, kind) per process to keep Sentry quiet. Drift Odoo doesn't
+# raise on at all (a removed selection value or context key) is caught by
+# scripts/odoo_schema_audit.py instead.
+_DRIFT_SIGNATURES = (
+    ("Invalid field", "unknown_field"),
+    ("Invalid domain", "invalid_domain"),
+    ("does not exist", "missing_method_or_model"),
+    ("Private methods", "private_method"),
+    ("cannot be called remotely", "private_method"),
+    ("Wrong value for", "invalid_selection_value"),
+    ("unexpected keyword argument", "signature_changed"),
+    ("positional argument", "signature_changed"),
+)
+_drift_reported: set = set()
+
+
+def _report_schema_drift(model: str, method: str, fault: xmlrpc.client.Fault) -> None:
+    text = fault.faultString or ""
+    if "Record does not exist" in text or "MissingError" in text:
+        return          # a deleted record, not schema drift
+    kind = next((k for sig, k in _DRIFT_SIGNATURES if sig in text), None)
+    if not kind or (model, method, kind) in _drift_reported:
+        return
+    _drift_reported.add((model, method, kind))
+    # Last meaningful line of Odoo's traceback, e.g. "ValueError: Invalid field 'x' on 'y'"
+    summary = next((ln.strip() for ln in reversed(text.splitlines()) if ln.strip()), text)[:300]
+    logger.error("odoo_schema_drift model=%s method=%s kind=%s detail=%s", model, method, kind, summary)
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("odoo_schema_drift", kind)
+            scope.set_tag("odoo_model", model)
+            scope.set_tag("odoo_method", method)
+            scope.fingerprint = ["odoo-schema-drift", model, method, kind]
+            sentry_sdk.capture_message(f"Odoo schema drift: {model}.{method}: {summary}", level="error")
+    except Exception:
+        pass
+
+
 def _connect():
     global _uid, _models
     url = settings.odoo_url.rstrip("/")
@@ -105,10 +150,11 @@ def odoo(model, method, args=None, kwargs=None):
             _connect()
         try:
             result = _models.execute_kw(settings.odoo_db, _uid, settings.odoo_password, model, method, args or [], kwargs or {})
-        except xmlrpc.client.Fault:
+        except xmlrpc.client.Fault as fault:
             # Odoo returned a structured error response (including response-serialisation
             # faults). Do NOT retry — the call reached Odoo and may have already written
             # data. Retrying a write would create duplicate records.
+            _report_schema_drift(model, method, fault)
             raise
         except Exception:
             # Connection / socket failure — safe to reconnect and retry.

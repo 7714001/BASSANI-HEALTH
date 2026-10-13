@@ -227,8 +227,8 @@ class VaultOdooWriter:
             "picking_type_id": ptypes[0]["id"],
             "location_id": src, "location_dest_id": dst,
             "company_id": company_id,
-            "move_ids_without_package": [(0, 0, {
-                "name": op["lot_name"],
+            "move_ids": [(0, 0, {  # Odoo 19: move_ids_without_package removed
+                "origin": op["lot_name"],  # Odoo 19: stock.move has no name
                 "product_id": product_id,
                 "product_uom_qty": op["qty_g"],
                 "location_id": src, "location_dest_id": dst,
@@ -325,14 +325,14 @@ class VaultOdooWriter:
                 "location_src_id": loc_src,
                 "location_dest_id": loc_dst,
                 "move_raw_ids": [(0, 0, {
-                    "name": op["input_lot"],
+                    "origin": op["input_lot"],  # Odoo 19: stock.move has no name
                     "product_id": input_product_id,
                     "product_uom_qty": consume_qty,
                     "location_id": loc_src, "location_dest_id": loc_dst,
                 })],
             }, context=ctx)
             odoo.execute("mrp.production", "action_confirm", [mo_id])
-            odoo.write("mrp.production", [mo_id], {"lot_producing_id": lot["lot_id"], "qty_producing": out["qty_g"]})
+            odoo.write("mrp.production", [mo_id], {"lot_producing_ids": [(6, 0, [lot["lot_id"]])], "qty_producing": out["qty_g"]})  # Odoo 19: lot_producing_id is now many2many
             raw_lines = odoo.search_read(
                 "stock.move.line", domain=[("production_id", "=", mo_id)], fields=["id"],
             )
