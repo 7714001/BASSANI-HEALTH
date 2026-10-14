@@ -386,6 +386,55 @@ def _paid_on_invoices(invoices: list) -> float:
     return round(sum(float(i.get("amount_total") or 0) - float(i.get("amount_residual") or 0) for i in invoices), 2)
 
 
+async def _advance_ticket_to_odoo_state(ticket: dict, live_state: str, now: datetime) -> bool:
+    """Move a ticket forward to match its Odoo order's live state (never
+    backwards), stamping each skipped stage "System (Auto-sync)" in
+    stage_history. Confirmed orders (sale/done) advance to awaiting_deposit:
+    the deposit gate applies even to orders confirmed directly in Odoo,
+    bypassing the portal's confirm flow. Cancellation is handled by the
+    caller, not here. Mutates ticket["status"]; returns True if it moved.
+
+    Shared by get_ticket (on every detail fetch) and Expected Payments
+    (8.69d), so a ticket whose order was confirmed in Odoo reaches Finance's
+    deposit list without anyone having to open it first."""
+    set_fields: dict = {"updated_at": now}
+    history:    list = []
+    current_status = ticket.get("status", "open")
+    # Unknown / legacy statuses (e.g. "invoice" from pre-8.39) are treated as
+    # beyond the pipeline so the "never go backward" guard blocks all movement.
+    current_idx = STATUSES.index(current_status) if current_status in STATUSES else len(STATUSES)
+
+    if live_state != ticket.get("odoo_order_state"):
+        set_fields["odoo_order_state"] = live_state
+        ticket["odoo_order_state"] = live_state
+
+    _s2s = {"draft": "quote", "sent": "quote", "sale": "awaiting_deposit", "done": "awaiting_deposit"}
+    target_status = _s2s.get(live_state, current_status)
+    target_idx = STATUSES.index(target_status) if target_status in STATUSES else 0
+
+    if target_idx > current_idx:
+        note = (f"Auto-sync: Odoo order confirmed (state: {live_state})"
+                if target_status == "awaiting_deposit" else f"Auto-sync: Odoo state {live_state}")
+        for stage in STATUSES[current_idx + 1 : target_idx + 1]:
+            history.append({
+                "status": stage, "exit_status": None,
+                "actor_id": "system", "actor_name": "System (Auto-sync)",
+                "at": now,
+                "note": note if stage in ("sale_order", "awaiting_deposit") else f"Auto-sync: Odoo state {live_state}",
+            })
+        set_fields["status"] = target_status
+        ticket["status"] = target_status
+
+    if set(set_fields) - {"updated_at"} or history:
+        mongo_op: dict = {"$set": set_fields}
+        if history:
+            mongo_op["$push"] = {"stage_history": {"$each": history}}
+        await col("tickets").update_one({"_id": ticket["_id"]}, mongo_op)
+        if history:
+            await ticket_manager.broadcast(str(ticket["_id"]), _ticket_customer_partner_id(ticket))
+    return bool(history)
+
+
 def _order_amount_owing(odoo, order_id: int, order_total: float) -> float:
     """What is still owing on an order: its total less every payment received
     on its posted invoices (deposits, advance payments, final invoices)."""
@@ -912,20 +961,154 @@ def list_payment_terms(current_user: dict = Depends(require_admin)):
     return {"payment_terms": terms}
 
 
+DEPOSIT_PCT = 50.0   # the deposit asked for on the pro-forma (send_deposit_due_proforma)
+_PAID_STATES = ("paid", "partial", "in_payment")
+_BALANCE_WAITING_STAGES = ("packed_waiting", "packed_notified")
+
+
+async def _expected_deposit_rows(odoo, exclude_order_ids: set) -> list:
+    """8.69d — confirmed orders still waiting on their deposit (the first
+    payment on a normal order), for Finance's Expected Payments list.
+
+    First catches up tickets the portal hasn't seen confirmed yet: a ticket
+    only moves to awaiting_deposit when someone opens it if its order was
+    confirmed directly in Odoo, or when Link Existing Order wrote the old
+    sale_order stage. Those are advanced here with the same auto-sync
+    get_ticket uses, so Finance never has to wait for someone to open them.
+
+    The expected deposit is DEPOSIT_PCT of the order total less anything
+    already paid on its posted invoices. Pay-before-collection orders are
+    left to the balance rows (exclude_order_ids); samples owe nothing."""
+    now = datetime.now(timezone.utc)
+
+    lagging = await col("tickets").find({
+        "type": "sales", "exit_status": None, "order_id": {"$ne": None},
+        "status": {"$in": ["open", "quote", "sale_order"]},
+    }).to_list(2000)
+    if lagging:
+        ids = list({t["order_id"] for t in lagging})
+        try:
+            states = {o["id"]: o["state"] for o in odoo.search_read(
+                "sale.order", [("id", "in", ids), ("state", "in", ["sale", "done"])],
+                fields=["id", "state"], limit=len(ids),
+            )}
+        except Exception as e:
+            logger.warning("expected_payments_state_catchup_failed error=%s", e)
+            states = {}
+        for t in lagging:
+            if t["order_id"] in states:
+                try:
+                    await _advance_ticket_to_odoo_state(t, states[t["order_id"]], now)
+                except Exception as e:
+                    logger.warning("expected_payments_advance_failed ticket=%s error=%s", t["_id"], e)
+
+    tickets = [t for t in await col("tickets").find({
+        "type": "sales", "exit_status": None, "order_id": {"$ne": None}, "status": "awaiting_deposit",
+    }).to_list(1000) if t["order_id"] not in exclude_order_ids
+        and not t.get("is_sample") and t.get("payment_arrangement") != "pay_before_collection"]
+    if not tickets:
+        return []
+
+    order_ids = list({t["order_id"] for t in tickets})
+    orders = {o["id"]: o for o in odoo.search_read(
+        "sale.order", [("id", "in", order_ids)],
+        fields=["id", "name", "amount_total", "invoice_ids", "state"], limit=len(order_ids),
+    )}
+    invoices = {i["id"]: i for i in _order_invoices(
+        odoo, list({i for o in orders.values() for i in (o.get("invoice_ids") or [])}))}
+
+    rows = []
+    for t in tickets:
+        order = orders.get(t["order_id"])
+        if not order or order.get("state") not in ("sale", "done"):
+            continue
+        order_invoices = [invoices[i] for i in (order.get("invoice_ids") or []) if i in invoices]
+        total = float(order.get("amount_total") or 0)
+        paid = _paid_on_invoices(order_invoices)
+        expected = round(total * DEPOSIT_PCT / 100, 2)
+        due = max(round(expected - paid, 2), 0.0)
+        paid_invoices = sorted((i for i in order_invoices if i.get("payment_state") in _PAID_STATES),
+                               key=lambda i: -(float(i.get("amount_total") or 0) - float(i.get("amount_residual") or 0)))
+        rr = t.get("release_request") or {}
+        link_invoice = None
+
+        if t.get("payment_confirmed_at") or t.get("released_on_account_at"):
+            # Gate already cleared but the packing board was never created
+            # (packing_board_queue_error). Nothing to collect; it needs the
+            # Admin Override retry on the Sales ticket.
+            stage = "deposit_stuck"
+            stage_label = ("Released on account, not on packing board" if t.get("released_on_account_at")
+                           else "Deposit received, not on packing board")
+            pay_mode = None
+            due = 0.0
+        elif paid_invoices:
+            stage, stage_label, pay_mode = "deposit_unlinked", "Paid in Odoo, not linked to the ticket", "link"
+            link_invoice = paid_invoices[0]
+        elif rr.get("status") == "pending":
+            stage = "deposit_requested"
+            stage_label = ("Pay before collection requested" if rr.get("kind") == "pay_before_collection"
+                           else "Release on account requested")
+            pay_mode = "deposit"
+        elif t.get("auto_release_held"):
+            stage, stage_label, pay_mode = "deposit_held", "Account customer, not released automatically", "deposit"
+        else:
+            stage, stage_label, pay_mode = "deposit_due", "Deposit due", "deposit"
+
+        # Same clock and 72h deadline as the Sales ticket's own age badge and
+        # the Operations Monitor's Deposit column (services/age_tier.py), so
+        # the three can never disagree about whether this order is overdue.
+        age = ticket_age_fields(t)
+        hours = age.get("hours_elapsed")
+        rows.append({
+            "ticket_id": str(t["_id"]),
+            "ref": f"TKT-{str(t['_id'])[-8:].upper()}",
+            "customer_name": t.get("customer_name"),
+            "reseller_name": t.get("reseller_name"),
+            "assigned_to_name": t.get("assigned_to_name"),
+            "order_id": t["order_id"],
+            "order_name": order.get("name"),
+            "order_total": total,
+            "amount_paid": paid,
+            "amount_due": due,
+            "expected_deposit": expected,
+            "invoice_id": link_invoice["id"] if link_invoice else None,
+            "invoice_name": link_invoice["name"] if link_invoice else None,
+            "invoice_residual": None,
+            "invoice_due_date": None,
+            "arrangement": "deposit_upfront",
+            "row_type": "deposit",
+            "stage": stage,
+            "stage_label": stage_label,
+            "stage_detail": " ".join((t.get("auto_release_held") or {}).get("blocks") or []) or
+                            t.get("packing_board_queue_error") or rr.get("reason") or None,
+            "waiting_since": t.get("created_at"),
+            "days_waiting": int(hours // 24) if hours is not None else None,
+            "age_tier": age.get("age_tier"),
+            "pop_awaiting_review": bool(t.get("pop_awaiting_review")),
+            "pop_count": len(t.get("pop_uploads") or []),
+            "pay_mode": pay_mode,
+            "customer_notified_at": None,
+        })
+    return rows
+
+
 @router.get("/expected-payments")
 async def list_expected_payments(
     view: str = "waiting",
     current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
 ):
-    """8.69 — Finance's list of payments to look out for: every pay-before-
-    collection order not yet paid in full, and every deposit order packed and
-    waiting on its balance. One row per order. Amounts are read live from
-    Odoo (order total less everything paid on its posted invoices), so the
-    figure always matches the accounting system.
+    """8.69 — Finance's list of payments to look out for, one row per order,
+    amounts read live from Odoo:
+      * deposits due (8.69d): confirmed orders waiting on their 50% deposit
+        before they can be packed;
+      * balances due: every pay-before-collection order not yet paid in full,
+        and every deposit order packed and waiting on its balance.
 
-    view: waiting (packed, customer waiting to hear: the urgent ones),
-    not_packed (approved, still being packed or signed off), all, or
-    paid_today (released today, to confirm the day's work landed).
+    view: waiting (balances on packed orders: the customer is waiting to hear),
+    deposits, not_packed (pay-before-collection approved, still being packed or
+    signed off), all, or paid_today (released today, to confirm the day's work
+    landed). Counts and totals always cover every view, so the tab badges are
+    right whichever one is open.
     Literal route, so it must stay registered before GET /{ticket_id}."""
     now = datetime.now(timezone.utc)
     sast_today_start = (now + timedelta(hours=2)).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=2)
@@ -954,131 +1137,148 @@ async def list_expected_payments(
             extra = await col("tickets").find({"type": "sales", "exit_status": None, "order_id": {"$in": legacy_ids}}).to_list(1000)
             tickets += [t for t in extra if payment_required_before_collection(t)]
 
-    if not tickets:
-        return {"rows": [], "counts": {"waiting": 0, "not_packed": 0}, "total_due": 0}
-
-    order_ids = list({t["order_id"] for t in tickets})
-    entries_by_order: dict = {}
-    async for e in col("packing_board").find(
-        {"order_id": {"$in": [str(i) for i in order_ids]}, "status": {"$ne": "cleared"}},
-        {"_id": 0, "order_id": 1, "status": 1, "invoice_id": 1, "inv_num": 1, "payment_hold": 1,
-         "payment_hold_at": 1, "completed_at": 1, "collection_released_at": 1, "customer_notified_at": 1,
-         "collected_at": 1, "is_backorder": 1, "waiting_stock": 1},
-    ):
-        entries_by_order.setdefault(int(e["order_id"]), []).append(e)
-
     odoo = get_odoo_client()
-    try:
-        orders = {o["id"]: o for o in odoo.search_read(
-            "sale.order", [("id", "in", order_ids)],
-            fields=["id", "name", "amount_total", "invoice_ids", "state"], limit=len(order_ids),
-        )}
-        all_inv_ids = list({i for o in orders.values() for i in (o.get("invoice_ids") or [])})
-        invoices = {i["id"]: i for i in _order_invoices(odoo, all_inv_ids)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
-
     rows = []
-    for t in tickets:
-        order = orders.get(t["order_id"])
-        if not order or order.get("state") == "cancel":
-            continue
-        order_invoices = [invoices[i] for i in (order.get("invoice_ids") or []) if i in invoices]
-        total = float(order.get("amount_total") or 0)
-        paid = _paid_on_invoices(order_invoices)
-        due = max(round(total - paid, 2), 0.0)
-        entries = entries_by_order.get(t["order_id"], [])
-        linked = {int(e["invoice_id"]) for e in entries if e.get("invoice_id")}
-        open_invoices = [i for i in order_invoices if float(i.get("amount_residual") or 0) > 0.005]
-        open_inv = (sorted((i for i in open_invoices if i["id"] in linked), key=lambda i: i["id"]) or
-                    sorted(open_invoices, key=lambda i: -float(i.get("amount_residual") or 0)) or [None])[0]
+    if tickets:
+        order_ids = list({t["order_id"] for t in tickets})
+        entries_by_order: dict = {}
+        async for e in col("packing_board").find(
+            {"order_id": {"$in": [str(i) for i in order_ids]}, "status": {"$ne": "cleared"}},
+            {"_id": 0, "order_id": 1, "status": 1, "invoice_id": 1, "inv_num": 1, "payment_hold": 1,
+             "payment_hold_at": 1, "completed_at": 1, "collection_released_at": 1, "customer_notified_at": 1,
+             "collected_at": 1, "is_backorder": 1, "waiting_stock": 1},
+        ):
+            entries_by_order.setdefault(int(e["order_id"]), []).append(e)
 
-        held = [e for e in entries if e.get("payment_hold") and not e.get("collection_released_at")]
-        legacy_unpaid = [e for e in entries if e.get("status") == "complete" and "payment_hold" not in e
-                         and not e.get("collected_at") and e.get("invoice_id") in {i["id"] for i in open_invoices}]
-        released_today = [e for e in entries if e.get("collection_released_at")
-                          and e["collection_released_at"].replace(tzinfo=timezone.utc) >= sast_today_start]
-        statuses = {e.get("status") for e in entries}
-        if view == "paid_today":
-            if not released_today:
+        try:
+            orders = {o["id"]: o for o in odoo.search_read(
+                "sale.order", [("id", "in", order_ids)],
+                fields=["id", "name", "amount_total", "invoice_ids", "state"], limit=len(order_ids),
+            )}
+            all_inv_ids = list({i for o in orders.values() for i in (o.get("invoice_ids") or [])})
+            invoices = {i["id"]: i for i in _order_invoices(odoo, all_inv_ids)}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+        for t in tickets:
+            order = orders.get(t["order_id"])
+            if not order or order.get("state") == "cancel":
                 continue
-            stage, stage_label = "paid", "Paid, customer notified"
-        elif held:
-            stage, stage_label = "packed_waiting", "Packed, waiting on payment"
-        elif legacy_unpaid:
-            stage, stage_label = "packed_notified", "Packed, customer already told it's ready"
-        elif statuses & {"ready"}:
-            stage, stage_label = "signoff", "Packed, awaiting QA/RP"
-        elif statuses & {"queued", "packing", "waiting_stock"}:
-            stage, stage_label = "packing", "Being packed"
-        elif entries:
-            stage, stage_label = "in_progress", "In fulfilment"
-        else:
-            stage, stage_label = "approved", "Approved, not on the packing board yet"
-        if view != "paid_today" and due <= 0.005:
-            continue
-        waiting = stage in ("packed_waiting", "packed_notified")
-        if view == "waiting" and not waiting:
-            continue
-        if view == "not_packed" and waiting:
-            continue
+            order_invoices = [invoices[i] for i in (order.get("invoice_ids") or []) if i in invoices]
+            total = float(order.get("amount_total") or 0)
+            paid = _paid_on_invoices(order_invoices)
+            due = max(round(total - paid, 2), 0.0)
+            entries = entries_by_order.get(t["order_id"], [])
+            linked = {int(e["invoice_id"]) for e in entries if e.get("invoice_id")}
+            open_invoices = [i for i in order_invoices if float(i.get("amount_residual") or 0) > 0.005]
+            open_inv = (sorted((i for i in open_invoices if i["id"] in linked), key=lambda i: i["id"]) or
+                        sorted(open_invoices, key=lambda i: -float(i.get("amount_residual") or 0)) or [None])[0]
 
-        since = None
-        if held:
-            since = min((e.get("payment_hold_at") or e.get("completed_at") for e in held if e.get("payment_hold_at") or e.get("completed_at")), default=None)
-        elif legacy_unpaid:
-            since = min((e.get("completed_at") for e in legacy_unpaid if e.get("completed_at")), default=None)
-        days = None
-        tier = None
-        if since:
-            days = int((now - since.replace(tzinfo=timezone.utc)).total_seconds() // 86400)
-            tier = "overdue" if days >= 7 else ("urgent" if days >= 3 else "ok")
+            held = [e for e in entries if e.get("payment_hold") and not e.get("collection_released_at")]
+            legacy_unpaid = [e for e in entries if e.get("status") == "complete" and "payment_hold" not in e
+                             and not e.get("collected_at") and e.get("invoice_id") in {i["id"] for i in open_invoices}]
+            released_today = [e for e in entries if e.get("collection_released_at")
+                              and e["collection_released_at"].replace(tzinfo=timezone.utc) >= sast_today_start]
+            statuses = {e.get("status") for e in entries}
+            if view == "paid_today":
+                if not released_today:
+                    continue
+                stage, stage_label = "paid", "Paid, customer notified"
+            elif held:
+                stage, stage_label = "packed_waiting", "Packed, waiting on payment"
+            elif legacy_unpaid:
+                stage, stage_label = "packed_notified", "Packed, customer already told it's ready"
+            elif statuses & {"ready"}:
+                stage, stage_label = "signoff", "Packed, awaiting QA/RP"
+            elif statuses & {"queued", "packing", "waiting_stock"}:
+                stage, stage_label = "packing", "Being packed"
+            elif entries:
+                stage, stage_label = "in_progress", "In fulfilment"
+            else:
+                stage, stage_label = "approved", "Approved, not on the packing board yet"
+            if view != "paid_today" and due <= 0.005:
+                continue
 
-        arrangement = t.get("payment_arrangement") or "deposit"
-        has_final_invoice = bool(linked)
-        if open_inv:
-            pay_mode = "invoice"
-        elif arrangement == "pay_before_collection" and not has_final_invoice and due > 0.005:
-            pay_mode = "advance"
-        else:
-            pay_mode = None
-        rows.append({
-            "ticket_id": str(t["_id"]),
-            "ref": f"TKT-{str(t['_id'])[-8:].upper()}",
-            "customer_name": t.get("customer_name"),
-            "reseller_name": t.get("reseller_name"),
-            "assigned_to_name": t.get("assigned_to_name"),
-            "order_id": t["order_id"],
-            "order_name": order.get("name"),
-            "order_total": total,
-            "amount_paid": paid,
-            "amount_due": due,
-            "invoice_id": open_inv["id"] if open_inv else None,
-            "invoice_name": open_inv["name"] if open_inv else None,
-            "invoice_residual": float(open_inv["amount_residual"]) if open_inv else None,
-            "invoice_due_date": (open_inv or {}).get("invoice_date_due") or None,
-            "arrangement": arrangement,
-            "stage": stage,
-            "stage_label": stage_label,
-            "waiting_since": since,
-            "days_waiting": days,
-            "age_tier": tier,
-            "pop_awaiting_review": bool(t.get("pop_awaiting_review")),
-            "pop_count": len(t.get("pop_uploads") or []),
-            "pay_mode": pay_mode,
-            "customer_notified_at": max((e["customer_notified_at"] for e in entries if e.get("customer_notified_at")), default=None),
-        })
+            since = None
+            if held:
+                since = min((e.get("payment_hold_at") or e.get("completed_at") for e in held if e.get("payment_hold_at") or e.get("completed_at")), default=None)
+            elif legacy_unpaid:
+                since = min((e.get("completed_at") for e in legacy_unpaid if e.get("completed_at")), default=None)
+            days = None
+            tier = None
+            if since:
+                days = int((now - since.replace(tzinfo=timezone.utc)).total_seconds() // 86400)
+                tier = "overdue" if days >= 7 else ("urgent" if days >= 3 else "ok")
 
-    order_rank = {"packed_waiting": 0, "packed_notified": 1, "signoff": 2, "packing": 3, "in_progress": 4, "approved": 5, "paid": 6}
-    rows.sort(key=lambda r: (order_rank.get(r["stage"], 9), -(r["days_waiting"] or 0), r["customer_name"] or ""))
-    return {
-        "rows": rows,
-        "counts": {
-            "waiting": sum(1 for r in rows if r["stage"] in ("packed_waiting", "packed_notified")),
-            "not_packed": sum(1 for r in rows if r["stage"] not in ("packed_waiting", "packed_notified", "paid")),
-        },
-        "total_due": round(sum(r["amount_due"] for r in rows if r["stage"] != "paid"), 2),
+            arrangement = t.get("payment_arrangement") or "deposit"
+            has_final_invoice = bool(linked)
+            if open_inv:
+                pay_mode = "invoice"
+            elif arrangement == "pay_before_collection" and not has_final_invoice and due > 0.005:
+                pay_mode = "advance"
+            else:
+                pay_mode = None
+            rows.append({
+                "ticket_id": str(t["_id"]),
+                "ref": f"TKT-{str(t['_id'])[-8:].upper()}",
+                "customer_name": t.get("customer_name"),
+                "reseller_name": t.get("reseller_name"),
+                "assigned_to_name": t.get("assigned_to_name"),
+                "order_id": t["order_id"],
+                "order_name": order.get("name"),
+                "order_total": total,
+                "amount_paid": paid,
+                "amount_due": due,
+                "invoice_id": open_inv["id"] if open_inv else None,
+                "invoice_name": open_inv["name"] if open_inv else None,
+                "invoice_residual": float(open_inv["amount_residual"]) if open_inv else None,
+                "invoice_due_date": (open_inv or {}).get("invoice_date_due") or None,
+                "arrangement": arrangement,
+                "row_type": "balance",
+                "stage": stage,
+                "stage_label": stage_label,
+                "stage_detail": None,
+                "waiting_since": since,
+                "days_waiting": days,
+                "age_tier": tier,
+                "pop_awaiting_review": bool(t.get("pop_awaiting_review")),
+                "pop_count": len(t.get("pop_uploads") or []),
+                "pay_mode": pay_mode,
+                "customer_notified_at": max((e["customer_notified_at"] for e in entries if e.get("customer_notified_at")), default=None),
+            })
+
+    if view == "paid_today":
+        deposit_rows = []
+    else:
+        try:
+            deposit_rows = await _expected_deposit_rows(odoo, {t["order_id"] for t in tickets})
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+    balance_rows = rows
+    counts = {
+        "waiting": sum(1 for r in balance_rows if r["stage"] in _BALANCE_WAITING_STAGES),
+        "not_packed": sum(1 for r in balance_rows if r["stage"] not in _BALANCE_WAITING_STAGES + ("paid",)),
+        "deposits": len(deposit_rows),
     }
+    total_due = round(sum(r["amount_due"] for r in balance_rows if r["stage"] != "paid"), 2)
+    deposits_due = round(sum(r["amount_due"] for r in deposit_rows), 2)
+
+    if view == "waiting":
+        rows = [r for r in balance_rows if r["stage"] in _BALANCE_WAITING_STAGES]
+    elif view == "not_packed":
+        rows = [r for r in balance_rows if r["stage"] not in _BALANCE_WAITING_STAGES]
+    elif view == "deposits":
+        rows = deposit_rows
+    elif view == "all":
+        rows = balance_rows + deposit_rows
+    # paid_today: balance_rows already filtered to today's releases
+
+    order_rank = {"packed_waiting": 0, "packed_notified": 1, "signoff": 2, "packing": 3, "in_progress": 4,
+                  "approved": 5, "deposit_unlinked": 6, "deposit_stuck": 7, "deposit_due": 8,
+                  "deposit_held": 9, "deposit_requested": 10, "paid": 11}
+    rows.sort(key=lambda r: (order_rank.get(r["stage"], 99), -(r["days_waiting"] or 0), r["customer_name"] or ""))
+    return {"rows": rows, "counts": counts, "total_due": total_due, "deposits_due": deposits_due}
 
 
 @router.get("/release-requests")
@@ -1181,52 +1381,7 @@ async def get_ticket(
                     await _cancel_linked_packing_board(order_id, "Odoo order was cancelled")
 
                 else:
-                    set_fields: dict = {"updated_at": now}
-                    history:    list = []
-                    current_status = ticket.get("status", "open")
-                    # Unknown / legacy statuses (e.g. "invoice" from pre-8.39) are treated as
-                    # beyond the pipeline so the "never go backward" guard blocks all movement.
-                    current_idx    = STATUSES.index(current_status) if current_status in STATUSES else len(STATUSES)
-
-                    if live_state != ticket.get("odoo_order_state"):
-                        set_fields["odoo_order_state"] = live_state
-
-                    # ── Determine target portal status ─────────────────────
-                    # Confirmed orders (sale/done) advance to awaiting_deposit —
-                    # a 50% deposit must be registered (via register-deposit,
-                    # below) before a packing board entry can be created. This
-                    # applies even to orders confirmed directly in Odoo, bypassing
-                    # the portal's confirm flow entirely: the deposit gate is not
-                    # something a particular confirm path can skip.
-                    _s2s = {"draft": "quote", "sent": "quote", "sale": "awaiting_deposit", "done": "awaiting_deposit"}
-                    target_status = _s2s.get(live_state, current_status)
-
-                    target_idx = STATUSES.index(target_status) if target_status in STATUSES else 0
-
-                    # ── Advance (never go backward) ────────────────────────
-                    if target_idx > current_idx:
-                        _notes = {
-                            "sale_order":       f"Auto-sync: Odoo order confirmed (state: {live_state})",
-                            "awaiting_deposit": f"Auto-sync: Odoo order confirmed (state: {live_state})",
-                        }
-                        for stage in STATUSES[current_idx + 1 : target_idx + 1]:
-                            history.append({
-                                "status": stage, "exit_status": None,
-                                "actor_id": "system", "actor_name": "System (Auto-sync)",
-                                "at": now,
-                                "note": _notes.get(stage, f"Auto-sync: Odoo state {live_state}"),
-                            })
-                        set_fields["status"] = target_status
-                        ticket["status"]     = target_status
-
-                    # ── Commit ────────────────────────────────────────────
-                    if set(set_fields) - {"updated_at"} or history:
-                        mongo_op: dict = {"$set": set_fields}
-                        if history:
-                            mongo_op["$push"] = {"stage_history": {"$each": history}}
-                        await col("tickets").update_one({"_id": oid}, mongo_op)
-                        if history:
-                            await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+                    await _advance_ticket_to_odoo_state(ticket, live_state, now)
 
         except Exception:
             pass  # Non-fatal — stale display is better than a broken detail page
