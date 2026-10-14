@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     reorder_alert_days:      int = 30
     sentry_dsn:        str = ""
     require_2fa_admin: bool = False
+    # Release on account / account terms (8.68/8.71) switched off until Bassani
+    # starts using credit limits (2026-10-14). Off: only a 50% deposit or Pay
+    # Before Collection clears the deposit gate. See account_terms.py.
+    account_terms_enabled: bool = False
     cors_origins: str = "*"
     super_admin_username: str = ""
     super_admin_password: str = ""

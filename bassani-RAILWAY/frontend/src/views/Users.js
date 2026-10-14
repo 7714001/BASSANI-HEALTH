@@ -439,9 +439,17 @@ const ROLE_DEFAULT_PERMS = {
 // tickbox isn't offered for other roles either.
 const ADMIN_ONLY_PERMS = { tickets: ["manage"] };
 const ADMIN_PERM_ROLES = new Set(["admin", "super_admin"]);
-function groupForRole(group, role) {
-  const hidden = ADMIN_ONLY_PERMS[group.domain];
-  if (!hidden || ADMIN_PERM_ROLES.has(role)) return group;
+// Permissions for a feature that's switched off portal-wide (auth payload
+// `features`) aren't offered either. Existing grants are kept, so they come
+// back as they were when the feature is switched on (2026-10-14: release on
+// account is off until Bassani start using credit limits).
+const FEATURE_PERMS = { account_terms: { customers: ["account_terms"], tickets: ["release_on_account"] } };
+function groupForRole(group, role, feature = () => true) {
+  const hidden = [
+    ...(ADMIN_PERM_ROLES.has(role) ? [] : (ADMIN_ONLY_PERMS[group.domain] || [])),
+    ...Object.entries(FEATURE_PERMS).flatMap(([f, perms]) => (feature(f) ? [] : (perms[group.domain] || []))),
+  ];
+  if (!hidden.length) return group;
   return { ...group, actions: group.actions.filter(a => !hidden.includes(a.key)) };
 }
 function stripAdminOnly(perms, role) {
@@ -465,7 +473,7 @@ const ROLE_LOCKED_PERMS = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Users() {
-  const { user: currentUser, can } = useAuth();
+  const { user: currentUser, can, feature } = useAuth();
   const isSuperAdmin = currentUser?.is_super_admin;
   const canManageUsers = isSuperAdmin || can("users.manage");
 
@@ -1054,7 +1062,7 @@ export default function Users() {
                 </p>
               </div>
               <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, createForm.role)).map(group => {
+                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, createForm.role, feature)).map(group => {
                   const groupLocked = ROLE_LOCKED_PERMS[createForm.role]?.[group.domain] || {};
                   return (
                     <PermissionGroup
@@ -1202,7 +1210,7 @@ export default function Users() {
             </p>
             <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
               <div className="divide-y divide-gray-100">
-                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, permsTarget.role)).map(group => {
+                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, permsTarget.role, feature)).map(group => {
                   const groupLocked = roleLocked[group.domain] || {};
                   return (
                     <PermissionGroup

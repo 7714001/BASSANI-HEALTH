@@ -8,6 +8,7 @@ import LabelPrinters from "./LabelPrinters";
 import GTINPool from "./GTINPool";
 import MonitorDisplaysSettings from "./MonitorDisplaysSettings";
 import ExternalApiSettings from "./ExternalApiSettings";
+import AccountTermsSettings from "./AccountTermsSettings";
 import { useAuth } from "../AuthContext";
 
 const TABS = [
@@ -21,6 +22,8 @@ const TABS = [
   // Phase 14 — API keys + kill switch are super-admin only; online stores need
   // channels.manage. The tab shows for anyone who can use at least one part.
   { key: "external-api",     label: "External API", visible: (user, can) => user?.is_super_admin || can("channels.manage") },
+  // Release on account on/off status, and removing terms on record (2026-10-14).
+  { key: "account-terms",    label: "Account Terms", visible: (user) => user?.is_super_admin },
 ];
 
 export default function Settings() {
@@ -67,6 +70,7 @@ export default function Settings() {
       {active === "gtin-pool"        && <GTINPool embedded />}
       {active === "monitor-displays" && <MonitorDisplaysSettings embedded />}
       {active === "external-api"     && tabs.some(t => t.key === "external-api") && <ExternalApiSettings />}
+      {active === "account-terms"    && tabs.some(t => t.key === "account-terms") && <AccountTermsSettings embedded />}
     </div>
   );
 }

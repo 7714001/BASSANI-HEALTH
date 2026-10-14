@@ -19,13 +19,35 @@ check runs in the order's own company context.
 Kept at root level (like ownership.py/contacts.py) because customer_routes,
 ticket_routes and order_routes all need it — importing it from a route file
 would create a route-importing-route cycle.
+
+Switched off (2026-10-14) until Bassani start using credit limits: while
+settings.account_terms_enabled is False nothing can approve terms or release an
+order on account, orders are never released automatically, and every customer
+gets the 50% deposit pro-forma at confirm. Orders already released keep their
+arrangement. require_account_terms_enabled() is the one backend check.
 """
 import time
 from datetime import date, datetime, timezone
 from typing import Optional
 
+from fastapi import HTTPException
+
+from config import get_settings
 from database import col
 from warehouse_context import company_context
+
+ACCOUNT_TERMS_OFF_MSG = ("Release on account is switched off. Register a 50% deposit, "
+                         "or approve Pay Before Collection.")
+
+
+def account_terms_enabled() -> bool:
+    return bool(get_settings().account_terms_enabled)
+
+
+def require_account_terms_enabled() -> None:
+    """Refuse any account-terms or release-on-account action while switched off."""
+    if not account_terms_enabled():
+        raise HTTPException(status_code=403, detail=ACCOUNT_TERMS_OFF_MSG)
 
 _TRADING_COMPANIES_CACHE: dict = {"at": 0.0, "rows": []}
 _CACHE_SECONDS = 600

@@ -88,11 +88,16 @@ export function AuthProvider({ children }) {
     return Boolean(user.permissions?.[domain]?.[action]);
   }, [user]);
 
+  /** Portal-wide feature switches from the login payload (2026-10-14). Unlike
+   *  can(), this applies to super admins too: a switched-off feature is hidden
+   *  from everyone. */
+  const feature = useCallback((name) => Boolean(user?.features?.[name]), [user]);
+
   /** True if the user is a super_admin or a regular admin (i.e. portal staff). */
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   return (
-    <AuthContext.Provider value={{ user, login, verifyOtp, logout, loading, can, isAdmin, setActiveWarehouse, setActiveCompany, changePassword }}>
+    <AuthContext.Provider value={{ user, login, verifyOtp, logout, loading, can, feature, isAdmin, setActiveWarehouse, setActiveCompany, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

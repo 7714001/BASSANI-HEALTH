@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import api from "../api";
+import { useAuth } from "../AuthContext";
 import { TopBar, DataTable, FilterPill, ChipRow, Badge, fmtR, fmtDate, fmtDateTime } from "../components/UI";
 
 const STATUS_LABEL = {
@@ -25,6 +26,8 @@ const STATUS_COLOR = {
 const KIND_LABEL = { on_account: "Release on account", pay_before_collection: "Pay before collection" };
 
 export default function ReleaseRequests() {
+  const { feature } = useAuth();
+  const accountTermsOn = feature("account_terms");   // switched off 2026-10-14
   const navigate = useNavigate();
   const [filter, setFilter] = useState("pending");
   const [rows, setRows] = useState([]);
@@ -58,8 +61,8 @@ export default function ReleaseRequests() {
         <div className="w-full space-y-4">
           <p className="text-sm text-gray-500">
             Orders a sales clerk has asked to send for packing without a deposit. Open one to decide: approve pay before
-            collection (the customer pays in full before collecting), release it on account terms, release that order only,
-            or decline and ask for a deposit.
+            collection (the customer pays in full before collecting){accountTermsOn ? ", release it on account terms, release that order only," : ""}
+            {" "}or decline and ask for a deposit.
           </p>
           <ChipRow>
             <FilterPill label="Waiting" active={filter === "pending"} onClick={() => setFilter("pending")} />

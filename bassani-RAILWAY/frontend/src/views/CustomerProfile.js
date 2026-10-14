@@ -432,7 +432,8 @@ const PAYMENT_COLOR = { not_paid:"text-red-600", partial:"text-amber-600", in_pa
 export default function CustomerProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, can } = useAuth();
+  const { user, can, feature } = useAuth();
+  const accountTermsOn = feature("account_terms");   // switched off 2026-10-14
   const canManageAddresses = user?.permissions?.customers?.manage;
 
   const INV_PAGE_SIZE  = 10;
@@ -959,12 +960,12 @@ export default function CustomerProfile() {
                       <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-medium">Samples Account</span>
                     )}
                     {/* 8.68 — staff-only, the API omits account_terms for reseller/customer */}
-                    {data?.account_terms?.status === "approved" && (
+                    {accountTermsOn && data?.account_terms?.status === "approved" && (
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${data.account_terms.review_overdue ? "bg-amber-50 text-amber-700" : "bg-teal-50 text-teal-700"}`}>
                         {data.account_terms.review_overdue ? "Account (review overdue)" : "Account"}
                       </span>
                     )}
-                    {data?.account_terms?.status === "suspended" && (
+                    {accountTermsOn && data?.account_terms?.status === "suspended" && (
                       <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-medium">Account suspended</span>
                     )}
                   </div>
@@ -1162,7 +1163,7 @@ export default function CustomerProfile() {
           {/* 8.68 — Account Terms (release on account, no deposit). Read-only for
               staff who release orders or handle payments; editable with
               customers.account_terms. */}
-          {user?.role !== "reseller" && user?.role !== "customer" &&
+          {accountTermsOn && user?.role !== "reseller" && user?.role !== "customer" &&
             (can("customers.account_terms") || can("tickets.release_on_account") || can("tickets.finance_confirm")) && (
             <AccountTermsSection
               customerId={id}

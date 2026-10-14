@@ -15,7 +15,7 @@ from routes.settings_routes import get_email_routing
 from ownership import get_owned_partner_ids, get_owning_reseller_id, is_partner_owned_by
 from portal_sales_agent import sync_portal_sales_agent
 from support_links import order_help_url
-from account_terms import get_account_terms, is_approved_for_company, order_credit_status
+from account_terms import get_account_terms, is_approved_for_company, order_credit_status, account_terms_enabled
 from services.email_service import (
     send_order_confirmed, send_order_cancelled,
     send_order_confirmed_partial, send_order_confirmed_partial_customer,
@@ -2053,7 +2053,9 @@ async def _send_order_confirmation_email(
         _cp = _p_rows[0].get("commercial_partner_id") if _p_rows else None
         _commercial_id = _cp[0] if _cp else partner[0]
 
-        _terms = None if (force_deposit or pay_before_collection) else await get_account_terms(_commercial_id)
+        # Switched off (2026-10-14): every customer is asked for the deposit.
+        _terms = (None if (force_deposit or pay_before_collection or not account_terms_enabled())
+                  else await get_account_terms(_commercial_id))
         _account_terms_email = bool(_terms) and is_approved_for_company(_terms, company_id)
 
         # 'sale.report_saleorder_pro_forma' — NOT '..._pro_forma_invoice'

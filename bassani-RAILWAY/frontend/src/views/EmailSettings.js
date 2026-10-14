@@ -3,6 +3,7 @@ import { X, Loader2, Mail, Save, FileText, Truck, DollarSign, Package, Send, Lif
 import api from "../api";
 import toast from "react-hot-toast";
 import { TopBar, BtnPrimary, LoadingState } from "../components/UI";
+import { useAuth } from "../AuthContext";
 
 // ── Email tag input ────────────────────────────────────────────────────────────
 
@@ -186,7 +187,8 @@ const ROUTING_KEYS = [
     note: "This one always goes straight to the customer resolved from Odoo, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
   },
   {
-    key: "order_confirmed_account_terms", group: "orders", icon: Mail, previewOnly: true,
+    // Hidden while release on account is switched off (2026-10-14).
+    key: "order_confirmed_account_terms", group: "orders", icon: Mail, previewOnly: true, feature: "account_terms",
     title: "Order Confirmed, Account Terms (Customer Notice)",
     description: "Sent instead of the 50% deposit pro-forma when a customer approved for account terms confirms an order. Attaches the pro-forma and states their payment terms, with no deposit asked for.",
     note: "This one always goes straight to the ordering customer, not a configurable staff list — there's nothing to save here, but you can still send a preview to see exactly what the customer receives.",
@@ -283,8 +285,8 @@ const ROUTING_KEYS = [
   {
     key: "release_request_to", group: "finance", icon: Mail,
     title: "Finance: No-Deposit Requested",
-    description: "Triggered when a sales clerk asks for an order to skip the deposit, either released on account (credit terms) or paid in full before collection. The order stays at Awaiting Deposit until Finance decides.",
-    note: "Add whoever decides these: Release on Account permission holders, and Finance who can approve pay before collection. If this list is empty, the request still shows on Deposit Requests, but nobody is emailed about it.",
+    description: "Triggered when a sales clerk asks for an order to skip the deposit and be paid in full before collection. The order stays at Awaiting Deposit until Finance decides.",
+    note: "Add whoever decides these, usually Finance. If this list is empty, the request still shows on Deposit Requests, but nobody is emailed about it.",
     placeholder: "finance@bassanihealth.com",
   },
   {
@@ -351,6 +353,8 @@ const BLANK_CONFIG = ROUTING_KEYS.filter(rk => !rk.previewOnly).reduce((acc, rk)
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function EmailSettings({ embedded = false }) {
+  const { feature } = useAuth();
+  const keyShown = (rk) => !rk.feature || feature(rk.feature);
   const [loading,     setLoading    ] = useState(true);
   const [saving,      setSaving     ] = useState(false);
   const [config,      setConfig     ] = useState(BLANK_CONFIG);
@@ -394,7 +398,7 @@ export default function EmailSettings({ embedded = false }) {
 
   if (loading) return <LoadingState />;
 
-  const visibleKeys = ROUTING_KEYS.filter(rk => rk.group === activeGroup);
+  const visibleKeys = ROUTING_KEYS.filter(rk => rk.group === activeGroup && keyShown(rk));
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -434,7 +438,7 @@ export default function EmailSettings({ embedded = false }) {
               {GROUPS.map(g => {
                 const Icon = g.icon;
                 const active = g.id === activeGroup;
-                const count = ROUTING_KEYS.filter(rk => rk.group === g.id).length;
+                const count = ROUTING_KEYS.filter(rk => rk.group === g.id && keyShown(rk)).length;
                 return (
                   <button
                     key={g.id}

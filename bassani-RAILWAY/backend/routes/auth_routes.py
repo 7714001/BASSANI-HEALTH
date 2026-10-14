@@ -17,6 +17,7 @@ from auth import (
     Token, verify_password, hash_password,
 )
 from config import get_settings
+from account_terms import account_terms_enabled
 from database import col
 from middleware.audit import audit_log
 from rate_limit import limiter
@@ -63,6 +64,10 @@ def _user_payload(user: dict) -> dict:
         "warehouse_id":        user.get("warehouse_id"),
         "must_change_password": bool(user.get("must_change_password", False)),
         "commission_eligible": bool(user.get("commission_eligible", True)),
+        # Features switched on/off for the whole portal (2026-10-14). The
+        # frontend hides switched-off features from everyone, super admins
+        # included, since can() alone can't (super admins pass every check).
+        "features": {"account_terms": account_terms_enabled()},
     }
     # Only sent once the user has used the switcher: null then means an
     # explicit "All warehouses", while absent means never set, so the

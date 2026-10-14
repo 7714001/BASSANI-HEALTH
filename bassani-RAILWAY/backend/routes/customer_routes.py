@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from bson import ObjectId
-from auth import get_current_user, require_admin, require_permission, require_any_permission, hash_password
+from auth import get_current_user, require_admin, require_permission, require_any_permission, hash_password, require_super_admin
 from odoo_client import get_odoo_client
 from database import col, NO_ID
 from credit import credit_status
@@ -14,7 +14,7 @@ from contacts import resolve_company_contacts
 from account_terms import (
     company_credit_summary,
     commercial_partner_id, trading_companies, payment_terms_catalog,
-    read_company_credit, review_overdue,
+    read_company_credit, review_overdue, require_account_terms_enabled,
 )
 from warehouse_context import company_context
 from odoo_client import odoo as odoo_call
@@ -591,6 +591,70 @@ async def merge_portal_logins(
     return {"success": True, "companies_added": len(to_add)}
 
 
+# ── Account terms while switched off (2026-10-14) ────────────────────────────
+# Release on account is off until Bassani start using credit limits. These
+# super-admin endpoints back Settings → Account Terms: what the portal still
+# has on record, and removing it. Literal path, so it must stay before
+# /{customer_id}.
+@router.get("/account-terms-records")
+async def list_account_terms_records(current_user: dict = Depends(require_super_admin)):
+    """Every customer with an account-terms approval on record, orders released
+    on account that are still in progress, and no-deposit requests still asking
+    for release on account."""
+    metas = await col("customer_metadata").find(
+        {"account_terms": {"$exists": True, "$ne": None}},
+        {"_id": 0, "odoo_partner_id": 1, "account_terms": 1},
+    ).to_list(500)
+    names = {}
+    pids = [m["odoo_partner_id"] for m in metas if m.get("odoo_partner_id")]
+    if pids:
+        try:
+            names = {r["id"]: r["name"] for r in get_odoo_client().read("res.partner", pids, fields=["name"])}
+        except Exception:
+            names = {}
+    customers = [{
+        "partner_id": m["odoo_partner_id"],
+        "name": names.get(m["odoo_partner_id"]) or f"Customer #{m['odoo_partner_id']}",
+        "account_terms": _account_terms_out(m["account_terms"]),
+    } for m in metas]
+    customers.sort(key=lambda c: (c["name"] or "").lower())
+
+    def _iso(v):
+        return v.isoformat() if isinstance(v, datetime) else v
+
+    def _ticket_row(t):
+        return {
+            "ticket_id": str(t["_id"]), "customer_name": t.get("customer_name"),
+            "order_id": t.get("order_id"), "order_name": t.get("order_name"), "status": t.get("status"),
+        }
+
+    released = await col("tickets").find(
+        {"released_on_account_at": {"$exists": True, "$ne": None}, "exit_status": None},
+        {"customer_name": 1, "order_id": 1, "order_name": 1, "status": 1, "release_type": 1,
+         "released_on_account_at": 1, "released_on_account_by_name": 1, "on_account_payment_term": 1},
+    ).sort("released_on_account_at", -1).to_list(200)
+    requests = await col("tickets").find(
+        {"release_request.status": "pending", "release_request.kind": {"$in": ["on_account", None]},
+         "status": "awaiting_deposit"},
+        {"customer_name": 1, "order_id": 1, "order_name": 1, "status": 1, "release_request": 1},
+    ).to_list(200)
+    return {
+        "customers": customers,
+        "released_orders": [{
+            **_ticket_row(t),
+            "release_type": t.get("release_type"),
+            "released_at": _iso(t.get("released_on_account_at")),
+            "released_by_name": t.get("released_on_account_by_name"),
+            "payment_term": (t.get("on_account_payment_term") or {}).get("name"),
+        } for t in released],
+        "pending_requests": [{
+            **_ticket_row(t),
+            "requested_by_name": (t.get("release_request") or {}).get("requested_by_name"),
+            "reason": (t.get("release_request") or {}).get("reason"),
+        } for t in requests],
+    }
+
+
 @router.get("/{customer_id}")
 def get_customer(customer_id: int, current_user: dict = Depends(get_current_user)):
     odoo = get_odoo_client()
@@ -1013,6 +1077,7 @@ async def approve_account_terms(
     """Approve (or re-approve) a customer for account terms. Writes the payment
     terms and credit limit into Odoo for each selected trading company — Odoo
     stores both per company — then records the approval in customer_metadata."""
+    require_account_terms_enabled()
     odoo = get_odoo_client()
     partner_id = commercial_partner_id(odoo, customer_id)
     try:
@@ -1103,6 +1168,7 @@ async def suspend_account_terms(
     """Stop any new order being released on account. Odoo's payment terms and
     credit limit are left as they are — orders already released keep their
     terms; re-approving restores release."""
+    require_account_terms_enabled()
     odoo = get_odoo_client()
     partner_id = commercial_partner_id(odoo, customer_id)
     reason = (body.reason or "").strip()
@@ -1129,6 +1195,61 @@ async def suspend_account_terms(
         detail={"reason": reason},
     )
     return {"success": True, "account_terms": _account_terms_out(after)}
+
+
+@router.delete("/{customer_id}/account-terms")
+async def remove_account_terms(
+    customer_id: int,
+    current_user: dict = Depends(require_super_admin),
+):
+    """Permanently remove a customer's account-terms approval (2026-10-14,
+    while release on account is switched off). Also clears the payment terms
+    and credit limit in Odoo for each company the approval covered, but only
+    where Odoo still holds exactly what the approval wrote, so anything Finance
+    set in Odoo themselves is left alone. Orders already released on account
+    are not touched."""
+    odoo = get_odoo_client()
+    partner_id = commercial_partner_id(odoo, customer_id)
+    meta = await col("customer_metadata").find_one({"odoo_partner_id": partner_id}, {"account_terms": 1, "_id": 0})
+    terms = (meta or {}).get("account_terms")
+    if not terms:
+        raise HTTPException(status_code=404, detail="This customer has no account terms on record")
+
+    names = {c["id"]: c["name"] for c in trading_companies(odoo)}
+    odoo_reset, odoo_left, odoo_errors = [], [], []
+    for cid in terms.get("company_ids") or []:
+        label = names.get(cid) or f"Company {cid}"
+        try:
+            cur = read_company_credit(odoo, partner_id, cid)
+            vals = {}
+            if cur["payment_term"] and cur["payment_term"]["id"] == terms.get("payment_term_id"):
+                vals["property_payment_term_id"] = False
+            if cur["credit_limit"] and abs(cur["credit_limit"] - float(terms.get("credit_limit") or 0)) < 0.005:
+                vals["credit_limit"] = 0.0
+            if vals:
+                odoo_call("res.partner", "write", [[partner_id], vals], {"context": company_context(cid)})
+                odoo_reset.append({"company": label, "cleared": sorted(vals)})
+            else:
+                odoo_left.append(label)
+        except Exception as e:
+            odoo_errors.append(f"{label}: {e}")
+
+    await col("customer_metadata").update_one({"odoo_partner_id": partner_id}, {"$unset": {"account_terms": ""}})
+    try:
+        label = odoo.read("res.partner", [partner_id], fields=["name"])[0]["name"]
+    except Exception:
+        label = str(partner_id)
+    await audit_log(
+        "customer.account_terms_removed", "customer", partner_id,
+        entity_label=label, user=current_user,
+        before=terms, after=None,
+        detail={"odoo_reset": odoo_reset, "odoo_unchanged": odoo_left, "odoo_errors": odoo_errors},
+    )
+    warning = None
+    if odoo_errors:
+        warning = ("Removed from the portal, but the payment terms or credit limit could not be cleared for "
+                   + "; ".join(odoo_errors) + ". Check the customer in the accounting system.")
+    return {"success": True, "odoo_reset": odoo_reset, "warning": warning}
 
 
 @router.patch("/{customer_id}/type")

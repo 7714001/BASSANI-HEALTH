@@ -47,7 +47,7 @@ from services.r2_client import r2_put, r2_presign
 from ownership import get_owned_partner_ids, is_partner_owned_by, get_owning_reseller_id
 from account_terms import (
     evaluate_release, commercial_partner_id, get_account_terms, payment_terms_catalog,
-    is_credit_term, read_company_credit,
+    is_credit_term, read_company_credit, account_terms_enabled, require_account_terms_enabled,
 )
 from portal_sales_agent import sync_portal_sales_agent
 from discount_requests import cancel_pending_request
@@ -2965,8 +2965,10 @@ async def register_deposit(
         raise HTTPException(
             status_code=400,
             detail=(f"This deposit is under {TOKEN_DEPOSIT_PCT:g}% of the order total. Token deposits create extra "
-                    "invoices; if the customer has a payment agreement, use Request Release on Account instead. "
-                    "To register it anyway, give a reason."),
+                    + ("invoices; if the customer has a payment agreement, use Request Release on Account instead. "
+                       if account_terms_enabled() else
+                       "invoices; if the customer can't pay a deposit, use Pay Before Collection instead. ")
+                    + "To register it anyway, give a reason."),
         )
 
     # Defense in depth — /payment-journals already scopes the dropdown to this
@@ -3277,6 +3279,7 @@ async def check_release_on_account(
 ):
     """Read-only: can this order be released on account, and why not. Powers
     the Release on Account button and window on the Sales ticket. Reads Odoo live."""
+    require_account_terms_enabled()
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
     if not partner_id:
         raise HTTPException(status_code=400, detail="Could not resolve the customer on this order")
@@ -3307,6 +3310,7 @@ async def release_on_account(
 
     Nothing is written to Odoo except, if needed, the order's payment terms,
     so the invoice's due date is right."""
+    require_account_terms_enabled()
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=400, detail="A reason is required (e.g. the account agreement reference)")
@@ -3466,6 +3470,8 @@ async def auto_release_on_confirm(ticket_oid, background_tasks: BackgroundTasks)
     with no account terms are untouched. Never raises: the order is already
     confirmed whatever happens here."""
     ticket_id = str(ticket_oid)
+    if not account_terms_enabled():
+        return {"released": False}
     try:
         oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
         if not partner_id or _release_stage_blocks(ticket, order):
@@ -3665,6 +3671,8 @@ async def request_release_on_account(
     kind = body.kind or "on_account"
     if kind not in REQUEST_KINDS:
         raise HTTPException(status_code=400, detail="Unknown request type")
+    if kind == "on_account":
+        require_account_terms_enabled()
     role = current_user.get("role")
     if role not in (ADMIN_ROLES | TICKET_ROLES | {"super_admin", "reseller"}):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -3750,6 +3758,8 @@ async def decide_release_request(
     decision = body.decision
     if decision not in ("release", "exception", "pay_before_collection", "decline"):
         raise HTTPException(status_code=400, detail="Unknown decision")
+    if decision in ("release", "exception"):
+        require_account_terms_enabled()
     note = (body.note or "").strip()
     oid, ticket, odoo, order, company_id, partner_id = await _load_release_context(ticket_id)
     rr = ticket.get("release_request") or {}

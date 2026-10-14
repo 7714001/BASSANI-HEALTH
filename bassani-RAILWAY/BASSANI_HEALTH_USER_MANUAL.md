@@ -574,7 +574,9 @@ Each step is handled by a different team member, and the portal enforces that no
 3. She confirms the order from the ticket — the customer gets the pro-forma invoice email automatically and the ticket sits at Awaiting Deposit
 4. The rest of the flow is identical: Finance registers the deposit (queues packing) → packing → QA/RP → Mark Complete (balance invoice created) → Finance registers the balance payment (customer told it's ready) → customer collects
 
-**Three ways past the deposit stage.** Every order needs one of: a **50% deposit** registered by Finance; **release on account** for a customer with a credit agreement (see Account Terms); or **pay before collection**, approved by Finance, where we pack with no deposit and the customer pays the full amount before collecting (see Pay Before Collection). Sales staff who can't approve these themselves click **Request No Deposit** on the ticket.
+**Release on account is switched off for now (October 2026).** Until we start using credit limits, every order needs either a **50% deposit** or **pay before collection**. The release-on-account buttons, the Account Terms card and the related permissions are hidden. Orders already released on account carry on as they were.
+
+**Three ways past the deposit stage (two while release on account is off).** Every order needs one of: a **50% deposit** registered by Finance; **release on account** for a customer with a credit agreement (see Account Terms); or **pay before collection**, approved by Finance, where we pack with no deposit and the customer pays the full amount before collecting (see Pay Before Collection). Sales staff who can't approve these themselves click **Request No Deposit** on the ticket.
 
 **Recurring orders:** If a customer orders the same thing on a regular schedule, Merveille (or the reseller) can click **Make Recurring** on a ticket that already has a quote built, and set how often it repeats (weekly, every 2 weeks, or monthly). Two days before each repeat date, the portal automatically emails the customer a link showing what's about to be ordered — the customer can accept or decline it themselves, no login needed. Accepting confirms the order automatically in Odoo (same as Merveille clicking Confirm Order); Finance still has to register the deposit before it moves to packing, exactly like any other order. If the customer doesn't respond in time, that one order is simply skipped and the schedule carries on to the next date — nothing breaks and nobody needs to intervene. Staff can see and manage all recurring schedules under **Orders > Recurring Orders**.
 
@@ -1078,7 +1080,9 @@ This creates the down payment invoice and records the payment against it in Odoo
 
 **If the order was already invoiced and paid in Odoo before this ticket existed** — most often a historical order attached via **Link Existing Order** — the Register Deposit screen shows a blue panel listing the existing invoice(s) and their payment status, with a **Use This Invoice** button next to each. Clicking it links that invoice as the deposit and queues the order onto the packing board, without creating a second, redundant invoice in Odoo. This only appears when Odoo shows real payment already registered against an invoice on that order — the normal Fixed Amount / Percentage deposit flow is still there and works exactly as before if you'd rather register a fresh deposit.
 
-### Account Terms and Release on Account (2026-10-10)
+### Account Terms and Release on Account (2026-10-10, switched off October 2026)
+
+> **Switched off.** This section describes the feature for when it's switched back on. While it's off, nothing below appears in the portal, and every order needs a 50% deposit or Pay Before Collection. A super admin can see whether it's on, which customers still have terms on record, and remove them, under **Settings → Account Terms**. Removing a customer's terms deletes the approval and clears the payment terms and credit limit it set in the accounting system; orders already released on account are not affected.
 
 Some customers have a payment agreement with us: they don't pay a deposit, and pay the full invoice within their agreed terms (for example 30 days). For these customers there is a second option at the deposit stage.
 

@@ -149,12 +149,19 @@ const R_EXIT_LABEL = { not_interested: "Cancelled", cancelled: "Cancelled", comp
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SalesTickets() {
-  const { can, user, isAdmin } = useAuth();
+  const { can, feature, user, isAdmin } = useAuth();
   const navigate        = useNavigate();
   const isReseller      = user?.role === "reseller";
   const canDrive        = can("tickets.sales") || isReseller;
   const canFinance      = can("tickets.finance_confirm");
-  const canRelease      = can("tickets.release_on_account");   // 8.68
+  // Release on account (8.68) is switched off portal-wide until Bassani start
+  // using credit limits (2026-10-14). holdsRelease still counts for what the
+  // permission also allows: approving Pay Before Collection and declining
+  // requests (mirrors ticket_routes.py::_can_decide_request). canRelease is
+  // releasing on account itself, so it also needs the switch.
+  const accountTermsOn  = feature("account_terms");
+  const holdsRelease    = can("tickets.release_on_account");
+  const canRelease      = holdsRelease && accountTermsOn;
   const canManage       = can("tickets.manage");
   const canConfirmOrder = can("orders.confirm") || isReseller;
   // Reconciliation wizard (2026-08-28) — each retroactive step requires its
@@ -1855,6 +1862,7 @@ export default function SalesTickets() {
         : canRelease ? "terms" : "pbc"
     );
     setDecideOpen(true);
+    if (!canRelease) return;
     loadReleaseCheck(detail.id);
     const pid = detail.customer_company_id || detail.customer_id;
     api.get(`/api/customers/${pid}/account-terms`)
@@ -2068,15 +2076,15 @@ export default function SalesTickets() {
   // 8.69 — Finance (deposit permission) can decide a request too, by
   // approving pay before collection; declining an on-account request still
   // needs the release permission (mirrors ticket_routes.py::_can_decide_request).
-  const canDecideRelease  = releaseReqPending && !isOwnReleaseReq && (canRelease || canFinance);
+  const canDecideRelease  = releaseReqPending && !isOwnReleaseReq && (holdsRelease || canFinance);
   // Approve pay before collection directly, the way Finance registers a
   // deposit directly.
-  const canApprovePbc     = awaitingDepositGate && (canFinance || canRelease) && !releaseReqPending;
+  const canApprovePbc     = awaitingDepositGate && (canFinance || holdsRelease) && !releaseReqPending;
   // Requests are for people who can't do it themselves: on account needs the
   // release permission, pay before collection needs Finance's.
   const requestKinds      = [
-    ...(!canRelease ? ["on_account"] : []),
-    ...(!canRelease && !canFinance ? ["pay_before_collection"] : []),
+    ...(accountTermsOn && !holdsRelease ? ["on_account"] : []),
+    ...(!holdsRelease && !canFinance ? ["pay_before_collection"] : []),
   ];
   const canRequestRelease = awaitingDepositGate && !releaseReqPending
     && user?.role !== "customer" && requestKinds.length > 0;
@@ -2200,7 +2208,7 @@ export default function SalesTickets() {
       waitingText = "Deposit registered — waiting for the order to reach the packing board.";
     } else if (releaseReqPending) {
       waitingText = `${releaseReqIsPbc ? "Pay before collection" : "Release on account"} requested by ${releaseReq.requested_by_name || "sales"}. Waiting for Finance to decide.`;
-    } else if (awaitingDepositGate && detail.auto_release_held) {
+    } else if (awaitingDepositGate && accountTermsOn && detail.auto_release_held) {
       waitingText = `Not released automatically on account terms: ${(detail.auto_release_held.blocks || []).join(" ")} Waiting for a deposit, or ask Finance to release it.`;
     } else if (awaitingDepositGate) {
       waitingText = "Waiting for the customer's deposit. Finance registers it once paid.";
@@ -3021,12 +3029,12 @@ export default function SalesTickets() {
                         <p className="text-amber-700 mt-0.5">
                           {releaseReq.requested_by_name} on {fmtDate(releaseReq.requested_at)}: {releaseReq.reason}
                         </p>
-                        {(isOwnReleaseReq || canRelease || (releaseReqIsPbc && canFinance)) && (
+                        {(isOwnReleaseReq || holdsRelease || (releaseReqIsPbc && canFinance)) && (
                           <button onClick={() => setWithdrawReleaseConfirm(true)} className="mt-1 text-amber-700 underline hover:text-amber-900">Withdraw request</button>
                         )}
                       </div>
                     )}
-                    {!isReseller && awaitingDepositGate && detail.auto_release_held && !releaseReqPending && (
+                    {!isReseller && accountTermsOn && awaitingDepositGate && detail.auto_release_held && !releaseReqPending && (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                         <p className="font-semibold">Account customer, not released automatically</p>
                         <p className="text-amber-700 mt-0.5">{(detail.auto_release_held.blocks || []).join(" ")}</p>
@@ -4392,8 +4400,9 @@ export default function SalesTickets() {
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                 <p className="text-xs font-semibold text-amber-800">This is under 10% of the order total ({fmtR(depositOrderTotal)})</p>
                 <p className="text-xs text-amber-700 mt-0.5 mb-2">
-                  Token deposits create extra invoices in the books. If this customer has a payment agreement,
-                  close this and use Request Release on Account instead. To register this deposit anyway, give a reason.
+                  Token deposits create extra invoices in the books. {accountTermsOn
+                    ? "If this customer has a payment agreement, close this and use Request Release on Account instead."
+                    : "If the customer can't pay a deposit, close this and use Pay Before Collection instead."} To register this deposit anyway, give a reason.
                 </p>
                 <Input value={smallDepositReason} onChange={e => setSmallDepositReason(e.target.value)}
                   placeholder="e.g. Customer paid a small amount upfront by agreement" />
@@ -4522,6 +4531,11 @@ export default function SalesTickets() {
                 </p>
                 <p className="text-amber-800 mt-0.5">{releaseReq.reason}</p>
                 <p className="text-amber-700 mt-1">Order total {fmtR(releaseReq.order_total || detailOrder?.amount_total || 0)}</p>
+                {!releaseReqIsPbc && !accountTermsOn && (
+                  <p className="text-amber-900 mt-2 font-medium">
+                    Release on account is switched off. Approve it as pay before collection, or decline so a deposit is paid.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-gray-500 mb-4">
@@ -4539,9 +4553,9 @@ export default function SalesTickets() {
                   { value: "exception", label: "Release this order only",
                     desc: "A one-off, with no standing terms. Recorded and audited as an exception." },
                 ] : []),
-                ...((canRelease || canFinance) ? [{ value: "pbc", label: "Pay before collection",
+                ...((holdsRelease || canFinance) ? [{ value: "pbc", label: "Pay before collection",
                   desc: "Pack it now with no deposit. The customer pays in full before collecting and is only told it's ready once paid. No credit is extended." }] : []),
-                ...(releaseReqPending && (canRelease || releaseReqIsPbc) ? [{ value: "decline", label: "Decline, deposit required",
+                ...(releaseReqPending && (holdsRelease || releaseReqIsPbc) ? [{ value: "decline", label: "Decline, deposit required",
                   desc: "Your note is emailed to the person who asked." }] : []),
               ].map(opt => (
                 <label key={opt.value} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${decision === opt.value ? "border-bassani-400 bg-bassani-50" : "border-gray-200 hover:border-gray-300"}`}>
