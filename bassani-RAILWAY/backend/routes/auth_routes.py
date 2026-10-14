@@ -13,7 +13,7 @@ from bson import ObjectId
 from auth import (
     authenticate_user, create_access_token,
     get_current_user, get_user_by_username,
-    resolve_customer_active_company,
+    resolve_customer_active_company, effective_permissions,
     Token, verify_password, hash_password,
 )
 from config import get_settings
@@ -59,7 +59,7 @@ def _user_payload(user: dict) -> dict:
             for c in (user.get("companies") or [])
         ],
         "is_super_admin": bool(user.get("is_super_admin", False)),
-        "permissions":   user.get("permissions") or {},
+        "permissions":   effective_permissions(user.get("role"), user.get("permissions")),
         "warehouse_id":        user.get("warehouse_id"),
         "must_change_password": bool(user.get("must_change_password", False)),
         "commission_eligible": bool(user.get("commission_eligible", True)),

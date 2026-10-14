@@ -434,6 +434,25 @@ const ROLE_DEFAULT_PERMS = {
 };
 
 // The core ticket permission per role — always checked and cannot be toggled off in the UI.
+// Permissions only an admin or super admin can hold (2026-10-14). The server
+// ignores them on any other role (auth.py ADMIN_ONLY_PERMISSIONS), so the
+// tickbox isn't offered for other roles either.
+const ADMIN_ONLY_PERMS = { tickets: ["manage"] };
+const ADMIN_PERM_ROLES = new Set(["admin", "super_admin"]);
+function groupForRole(group, role) {
+  const hidden = ADMIN_ONLY_PERMS[group.domain];
+  if (!hidden || ADMIN_PERM_ROLES.has(role)) return group;
+  return { ...group, actions: group.actions.filter(a => !hidden.includes(a.key)) };
+}
+function stripAdminOnly(perms, role) {
+  if (ADMIN_PERM_ROLES.has(role)) return perms;
+  const out = { ...perms };
+  for (const [domain, keys] of Object.entries(ADMIN_ONLY_PERMS)) {
+    if (out[domain]) out[domain] = { ...out[domain], ...Object.fromEntries(keys.map(k => [k, false])) };
+  }
+  return out;
+}
+
 const ROLE_LOCKED_PERMS = {
   sales:                  { tickets: { sales: true } },
   orders_clerk:           { tickets: { orders: true } },
@@ -660,7 +679,7 @@ export default function Users() {
       base[g.domain] = { ...base[g.domain], ...(stored[g.domain] || {}) };
     }
     setPermsTarget(u);
-    setEditPerms(base);
+    setEditPerms(stripAdminOnly(base, u.role));
     setExpandedGroups(Object.fromEntries(PERMISSION_GROUPS.map(g => [g.domain, true])));
     setPermsModal(true);
   };
@@ -1035,7 +1054,7 @@ export default function Users() {
                 </p>
               </div>
               <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                {PERMISSION_GROUPS.map(group => {
+                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, createForm.role)).map(group => {
                   const groupLocked = ROLE_LOCKED_PERMS[createForm.role]?.[group.domain] || {};
                   return (
                     <PermissionGroup
@@ -1183,7 +1202,7 @@ export default function Users() {
             </p>
             <div className="border border-gray-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
               <div className="divide-y divide-gray-100">
-                {PERMISSION_GROUPS.map(group => {
+                {PERMISSION_GROUPS.map(fullGroup => groupForRole(fullGroup, permsTarget.role)).map(group => {
                   const groupLocked = roleLocked[group.domain] || {};
                   return (
                     <PermissionGroup
@@ -1195,8 +1214,7 @@ export default function Users() {
                       onExpand={() => setExpandedGroups(prev => ({ ...prev, [group.domain]: !prev[group.domain] }))}
                       onToggle={(action) => { if (!groupLocked[action]) togglePerm(group.domain, action); }}
                       onToggleAll={() => {
-                        const unlocked = PERMISSION_GROUPS.find(g => g.domain === group.domain)
-                          ?.actions.filter(a => !groupLocked[a.key]) || [];
+                        const unlocked = group.actions.filter(a => !groupLocked[a.key]);
                         const allOn = unlocked.every(a => editPerms[group.domain]?.[a.key]);
                         setEditPerms(prev => ({
                           ...prev,

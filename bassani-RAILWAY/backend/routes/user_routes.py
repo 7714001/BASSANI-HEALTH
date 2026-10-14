@@ -8,6 +8,7 @@ from bson import ObjectId
 from auth import (
     require_admin, get_current_user, hash_password, DEFAULT_ADMIN_PERMISSIONS,
     ALL_ROLES, TICKET_ROLES, PRODUCTION_ROLES, ROLE_DEFAULT_PERMISSIONS,
+    effective_permissions,
 )
 from database import col
 from middleware.audit import audit_log
@@ -225,7 +226,8 @@ async def create_user(
 
     perms = _permissions_for_new_role(body.role, body.permissions)
     if perms:
-        doc["permissions"] = perms
+        # Admin-only permissions (tickets.manage) never stick to a non-admin role.
+        doc["permissions"] = effective_permissions(body.role, perms)
 
     result = await col("users").insert_one(doc)
     await audit_log("user.create", "user", str(result.inserted_id), entity_label=body.username,
@@ -306,7 +308,8 @@ async def update_user(
                             status_code=403,
                             detail=f"You cannot grant '{domain}.{action}'",
                         )
-        updates["permissions"] = body.permissions
+        # Admin-only permissions (tickets.manage) never stick to a non-admin role.
+        updates["permissions"] = effective_permissions(body.role or target.get("role"), body.permissions)
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")

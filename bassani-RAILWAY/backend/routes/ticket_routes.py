@@ -1492,6 +1492,23 @@ async def update_ticket_stage(
     if body.status == "incomplete" and not body.incomplete_reason:
         raise HTTPException(status_code=400, detail="incomplete_reason is required when marking a ticket incomplete")
 
+    # Admin Override is admins only (2026-10-14). This endpoint also serves
+    # two everyday Sales buttons, Assign to me and Not Interested / Cancel,
+    # which stay on tickets.sales. Anything else (setting a stage, repointing
+    # the Odoo order or invoice, an incomplete reason, closing a ticket as
+    # complete) is the override and needs tickets.manage, which only an admin
+    # or super admin can hold (auth.effective_permissions). Without this the
+    # dropdown was only hidden on screen, not enforced.
+    is_override = (
+        body.status is not None or body.order_id is not None or body.invoice_id is not None
+        or bool(body.incomplete_reason) or body.exit_status == "complete"
+    )
+    if is_override and not _user_has(current_user, "tickets.manage"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin can override a ticket's stage. Use the Actions and Next Step on the ticket instead.",
+        )
+
     now = datetime.now(timezone.utc)
     updates: dict = {"updated_at": now}
 

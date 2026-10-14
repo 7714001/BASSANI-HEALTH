@@ -382,6 +382,27 @@ async def resolve_customer_active_company(user: dict) -> dict:
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
 
+# Permissions only an admin or super admin can hold, whatever is ticked on a
+# user's record. tickets.manage is the Admin Override on Sales and Orders
+# tickets (set any stage, repoint the Odoo order/invoice): staff in the
+# ticketing roles work through Actions and Next Step instead (2026-10-14,
+# product owner — non-admin users had been granted it and were using it).
+ADMIN_ONLY_PERMISSIONS = {("tickets", "manage")}
+
+
+def effective_permissions(role: Optional[str], perms: Optional[dict]) -> dict:
+    """A user's stored permissions with ADMIN_ONLY_PERMISSIONS switched off
+    for any role outside ADMIN_ROLES. Applied in get_current_user (every
+    backend check) and in the login/me payload (the frontend's can()), so
+    both always agree, and to permissions on save (user_routes.py)."""
+    perms = {k: dict(v) if isinstance(v, dict) else v for k, v in (perms or {}).items()}
+    if role not in ADMIN_ROLES:
+        for domain, action in ADMIN_ONLY_PERMISSIONS:
+            if isinstance(perms.get(domain), dict) and perms[domain].get(action):
+                perms[domain][action] = False
+    return perms
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -410,6 +431,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         raise credentials_exception
 
     user = await resolve_customer_active_company(user)
+    user["permissions"] = effective_permissions(user.get("role"), user.get("permissions"))
     return user
 
 
