@@ -22,6 +22,8 @@ import {
 } from "../components/UI";
 import { validateSAID, validatePassport } from "../utils/validators";
 import { fetchAllProducts } from "../utils/productExport";
+import { lineStockFields, customerAvailability, stockRank, lineStockNote } from "../utils/stockStatus";
+import { CustomerStockBadge } from "../components/StockBadge";
 
 const ENTITY_TYPES = [
   { value: "Private Company (Pty) Ltd",   label: "Private Company (Pty) Ltd"   },
@@ -1058,7 +1060,7 @@ export function Orders() {
           newCart.push({
             product_id: p.id, product_uom_qty: l.qty, price_unit: p.list_price,
             name: p.display_name || p.name, _sku: p.default_code || "",
-            _stock: Math.max(0, p.virtual_available ?? 0), _taxRate: p.tax_rate ?? 0,
+            ...lineStockFields(p), _taxRate: p.tax_rate ?? 0,
             _image128: p.image_128 || null,
           });
         });
@@ -1115,7 +1117,7 @@ export function Orders() {
             price_unit: p.list_price,
             name:       p.display_name || p.name,
             _sku:       p.default_code || "",
-            _stock:     Math.max(0, p.virtual_available ?? 0),
+            ...lineStockFields(p),
             _taxRate:   p.tax_rate ?? 0,
             _image128:  p.image_128 || null,
           });
@@ -1218,7 +1220,7 @@ export function Orders() {
       return [...prev, {
         product_id: pid, product_uom_qty: minQty, price_unit: product.list_price,
         name: product.display_name || product.name, _sku: product.default_code || "",
-        _stock: Math.max(0, product.virtual_available ?? 0), _taxRate: product.tax_rate ?? 0,
+        ...lineStockFields(product), _taxRate: product.tax_rate ?? 0,
         _image128: product.image_128 || null,
       }];
     });
@@ -1237,7 +1239,10 @@ export function Orders() {
   // parents, so it's pulled out once rather than duplicated.
   const renderCartProductCard = (p) => {
     const item       = cartItemFor(p);
-    const outOfStock = (p.virtual_available ?? 0) <= 0;
+    // In stock / Available soon (stock on its way) / Out of stock — never a
+    // number for resellers/customers (2026-10-14, utils/stockStatus.js).
+    const availability = customerAvailability(p);
+    const outOfStock = availability === "out";
     const minQty     = cartMoq[p.id] || 0;
     // Requesting more than _stock is always allowed (2026-08-21 fix) — it
     // used to silently clamp back down for an in-stock item with zero
@@ -1249,6 +1254,7 @@ export function Orders() {
     // partially-in-stock item should be capped when a fully out-of-stock one
     // isn't. The excess is now surfaced as a live inline note instead.
     const backorderQty = item ? Math.max(0, item.product_uom_qty - item._stock) : 0;
+    const qtyNote = item ? lineStockNote(item.product_uom_qty, item._stock, item._forecast ?? item._stock) : null;
     const { base, groups: rawGroups } = parseDisplayName(p.display_name || p.name || "");
     // rawGroups[0] is the Brand/Grade code (e.g. "Indoor") when a product has
     // more than one variant attribute — stripped from the Qty line itself
@@ -1316,11 +1322,9 @@ export function Orders() {
             <span className="text-base font-bold text-gray-900">{fmtR(p.list_price)}</span>
             <span className="text-[10px] font-medium text-gray-400">excl. VAT</span>
           </span>
-          {/* Binary in-stock/out-of-stock only — Bassani does not want the
-              exact quantity on hand shown to resellers/customers. */}
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>
-            {outOfStock ? "Out of stock" : "In stock"}
-          </span>
+          {/* No quantities for resellers/customers: In stock / Available soon /
+              Out of stock only. */}
+          <CustomerStockBadge product={p} />
         </div>
         {item ? (
           <div className="flex flex-col gap-1">
@@ -1345,16 +1349,20 @@ export function Orders() {
                 would hand it over via simple subtraction. */}
             {backorderQty > 0 && (
               <p className="text-[10px] text-amber-600 text-center">
-                {item._stock > 0
-                  ? "Part of this quantity will ship now, the rest as a backorder"
-                  : "Will ship as a backorder once restocked"}
+                {qtyNote && qtyNote.backorder === 0
+                  ? (item._stock > 0
+                      ? "Part of this quantity will ship now, the rest when new stock arrives"
+                      : "Will ship as soon as new stock arrives")
+                  : (item._stock > 0
+                      ? "Part of this quantity will ship now, the rest as a backorder"
+                      : "Will ship as a backorder once restocked")}
               </p>
             )}
           </div>
         ) : (
           <button onClick={() => addToCart(p)}
-            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${outOfStock ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
-            {outOfStock ? "+ Add to Order (Backorder)" : "+ Add to Order"}
+            className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${availability !== "in_stock" ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200" : "bg-bassani-600 hover:bg-bassani-700 text-white"}`}>
+            {outOfStock ? "+ Add to Order (Backorder)" : availability === "soon" ? "+ Add to Order (Available soon)" : "+ Add to Order"}
           </button>
         )}
       </div>
@@ -1568,7 +1576,7 @@ export function Orders() {
   // in context so a buyer knows it exists, just sorted after what's available).
   const cartMatchesFilter = (p) => {
     const q           = cartProdSearch.toLowerCase();
-    const inStock      = (p.virtual_available ?? 0) > 0;
+    const inStock      = customerAvailability(p) === "in_stock";
     const matchQ       = !q || p.name.toLowerCase().includes(q) || (p.default_code || "").toLowerCase().includes(q);
     const matchVariant = cartProdVariant === "all" || getVariantLabel(p, cartVariantLabelOpts) === cartProdVariant;
     const matchStock   = cartStockFilter === "all" || (cartStockFilter === "in_stock" ? inStock : !inStock);
@@ -1579,9 +1587,9 @@ export function Orders() {
   // it happens to be cheaper); cartSortBy only decides the tiebreaker
   // within each stock tier, defaulting to name (unchanged prior behaviour).
   const cartSortInStockFirst = (a, b) => {
-    const aIn = (a.virtual_available ?? 0) > 0;
-    const bIn = (b.virtual_available ?? 0) > 0;
-    if (aIn !== bIn) return aIn ? -1 : 1;
+    // In stock, then available soon, then out of stock.
+    const rankDiff = stockRank(a) - stockRank(b);
+    if (rankDiff) return rankDiff;
     if (cartSortBy === "price_asc")  return (a.list_price ?? 0) - (b.list_price ?? 0);
     if (cartSortBy === "price_desc") return (b.list_price ?? 0) - (a.list_price ?? 0);
     return a.name.localeCompare(b.name);

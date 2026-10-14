@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Search, X, Package, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import api from "../api";
+import { StockBadge, IncomingDates } from "./StockBadge";
+import { stockInfo, stockRank } from "../utils/stockStatus";
 import { fmtR, parseDisplayName, ProductThumb } from "./UI";
 
 // ── Searchable dropdown select ────────────────────────────────────────────────
@@ -272,6 +274,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
   const [loading,         setLoading        ] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [addedIds,        setAddedIds       ] = useState(new Set());
+  const [expandedDates,   setExpandedDates  ] = useState(new Set());  // products showing expected-arrival dates
   const debounceRef = useRef(null);
   const searchRef   = useRef(null);
 
@@ -354,11 +357,8 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
     const list = selectedVariant
       ? products.filter(p => parseDisplayName(p.display_name || p.name || "").groups.includes(selectedVariant))
       : products;
-    return [...list].sort((a, b) => {
-      const aIn = (a.virtual_available || 0) > 0;
-      const bIn = (b.virtual_available || 0) > 0;
-      return aIn === bIn ? 0 : aIn ? -1 : 1;
-    });
+    // Available now first, then stock on its way, then out of stock.
+    return [...list].sort((a, b) => stockRank(a) - stockRank(b));
   }, [products, selectedVariant]);
 
   const handleAdd = (product) => {
@@ -489,8 +489,7 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
             <div className="divide-y divide-gray-50">
               {displayed.map(p => {
                 const { base, groups } = parseDisplayName(p.display_name || p.name || "");
-                const stock            = Math.max(0, Math.floor(p.virtual_available || 0));
-                const inStock          = stock > 0;
+                const tier             = stockInfo(p).tier;
                 const added            = addedIds.has(p.id);
 
                 return (
@@ -515,13 +514,17 @@ export default function ProductPickerDrawer({ open, onClose, warehouseId, onAdd 
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1.5">
-                        <span className={`text-[10px] font-medium ${inStock ? "text-green-600" : "text-red-500"}`}>
-                          {inStock ? `${stock} in stock` : "Out of stock"}
-                        </span>
+                        <StockBadge product={p} />
                         {p.tax_rate > 0 && (
                           <span className="text-[10px] text-gray-400">+{p.tax_rate}% VAT</span>
                         )}
                       </div>
+                      {(tier === "incoming" || tier === "reserved") && (
+                        expandedDates.has(p.id)
+                          ? <IncomingDates productId={p.id} className="mt-1" />
+                          : <button type="button" onClick={() => setExpandedDates(prev => new Set(prev).add(p.id))}
+                              className="mt-1 text-[10px] font-medium text-amber-700 hover:underline">When is it expected?</button>
+                      )}
                     </div>
                     </div>
 

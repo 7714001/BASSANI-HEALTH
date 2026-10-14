@@ -5,6 +5,8 @@ import { Download } from "lucide-react";
 import { TopBar, DataTable, SearchBar, ProductThumb, fmtR, parseDisplayName, WarehouseLabel } from "../components/UI";
 import { SearchableSelect } from "../components/ProductPickerDrawer";
 import { fetchAllProducts } from "../utils/productExport";
+import { CustomerStockBadge } from "../components/StockBadge";
+import { customerAvailability, CUSTOMER_AVAILABILITY } from "../utils/stockStatus";
 
 // stripLeadingGroup drops the first attribute group (the grade/brand code,
 // e.g. "EXO") once a Brand/Grade sub-category is already selected — showing
@@ -99,7 +101,8 @@ export default function ResellerCatalog() {
         Category: p.categ_id?.[1] || "",
         Variant: getVariantLabel(p, variantLabelOpts) || "",
         "Sale Price (R)": (p.list_price ?? 0).toFixed(2),
-        "Available Stock": p.virtual_available ?? 0,
+        // Status only — stock figures are never given to resellers/customers.
+        "Availability": CUSTOMER_AVAILABILITY[customerAvailability(p)].label,
         "Min Order Qty": moq[p.id] || "",
       }));
       const wb = XLSX.utils.book_new();
@@ -237,16 +240,9 @@ export default function ResellerCatalog() {
               accessorKey: "virtual_available",
               header: "Stock",
               enableSorting: false,
-              // Binary in-stock/out-of-stock only — Bassani does not want
-              // the exact quantity on hand shown to resellers/customers.
-              cell: ({ row: { original: p } }) => {
-                const outOfStock = (p.virtual_available ?? 0) <= 0;
-                return (
-                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${outOfStock ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>
-                    {outOfStock ? "Out of stock" : "In stock"}
-                  </span>
-                );
-              },
+              // In stock / Available soon / Out of stock only — Bassani does
+              // not show resellers/customers the actual quantities.
+              cell: ({ row: { original: p } }) => <CustomerStockBadge product={p} />,
             },
           ]}
           data={visibleProducts}

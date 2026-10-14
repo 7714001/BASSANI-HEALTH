@@ -1515,84 +1515,6 @@ export default function OrdersTickets() {
           </Modal>
         )}
 
-        {fulfilledPreview && (
-          <Modal title="Close Fulfilled Orders" onClose={() => !fulfilledSaving && setFulfilledPreview(null)} width="max-w-3xl">
-            <p className="text-sm text-gray-600">
-              These open tickets are for orders Odoo shows as already delivered. Closing takes them off the packing board and
-              closes the Sales ticket as Complete with a note. Nothing is changed in Odoo, no packing or QA/RP sign-off is
-              recorded, and no one is emailed.
-            </p>
-            {[
-              ["paid", "Delivered and paid", "Ticked by default."],
-              ["owing", "Delivered, money still owing", "Not ticked by default: the customer still owes on these invoices. Closing the ticket doesn't change that; follow it up on the Invoices page."],
-            ].map(([key, title, hint]) => fulfilledPreview[key].length > 0 && (
-              <div key={key} className="mt-4">
-                <p className="text-sm font-semibold text-gray-800">{title} ({fulfilledPreview[key].length})</p>
-                <p className="text-xs text-gray-500 mb-2">{hint}</p>
-                <div className="border border-gray-100 rounded-xl divide-y divide-gray-50 max-h-72 overflow-y-auto">
-                  {fulfilledPreview[key].map(r => (
-                    <label key={r.order_id} className="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50">
-                      <input type="checkbox" className="mt-1" checked={fulfilledPick.has(r.order_id)} onChange={() => toggleFulfilled(r.order_id)} />
-                      <div className="min-w-0 text-xs">
-                        <p className="text-sm font-medium text-gray-900">
-                          {r.order_name} · {r.customer_name}
-                          {r.owing > 0 && <span className="ml-2 text-amber-700">{fmtR(r.owing)} owing</span>}
-                        </p>
-                        <p className="text-gray-500">
-                          Delivered: {(r.deliveries || []).join(", ") || "n/a"}
-                          {r.invoices?.length ? ` · Invoices: ${r.invoices.join(", ")}` : ""}
-                        </p>
-                        <p className="text-gray-400">
-                          {r.ticket_ref ? `${r.ticket_ref} (${r.ticket_status})` : "No open Sales ticket"}
-                          {r.board?.length ? ` · On packing board: ${r.board.map(b => `${b.ps_num || "entry"} ${b.status}${b.signed_off ? ", signed off" : ""}`).join("; ")}` : ""}
-                        </p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="flex justify-end gap-2 mt-4">
-              <BtnSecondary onClick={() => setFulfilledPreview(null)} disabled={fulfilledSaving}>Cancel</BtnSecondary>
-              <BtnDanger onClick={confirmCloseFulfilled} disabled={fulfilledSaving || fulfilledPick.size === 0}>
-                Close {fulfilledPick.size} Order{fulfilledPick.size !== 1 ? "s" : ""}
-              </BtnDanger>
-            </div>
-          </Modal>
-        )}
-
-        {reconcilePreview && (
-          <Modal title="Reconcile Cancelled Tickets" onClose={() => setReconcilePreview(null)}>
-            <p className="text-sm text-gray-700 font-medium mb-2">
-              {reconcilePreview.length} order ticket{reconcilePreview.length !== 1 ? "s are" : " is"} still active on the board, but the Sales ticket behind {reconcilePreview.length !== 1 ? "them has" : "it has"} already closed. Confirming will cancel {reconcilePreview.length !== 1 ? "these entries" : "this entry"} so {reconcilePreview.length !== 1 ? "they stop" : "it stops"} showing on the Operations Monitor.
-            </p>
-            <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100 mb-3">
-              {reconcilePreview.map(o => (
-                <div key={o.packing_board_id} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-800 truncate">
-                      {o.ps_num || `Order ${o.order_id}`} {o.is_backorder && <span className="text-amber-600 text-xs font-normal">(backorder)</span>}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {o.customer_name || "Unknown customer"} · queued {fmtDate(o.queued_at)}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <Badge color="gray">Board: {o.status}</Badge>{" "}
-                    <Badge color="red">Ticket: {o.ticket_exit_status}</Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-red-600 font-medium">This cannot be undone from the portal.</p>
-            <div className="flex justify-end gap-2 mt-4">
-              <BtnSecondary onClick={() => setReconcilePreview(null)}>Cancel</BtnSecondary>
-              <BtnDanger onClick={confirmReconcileCancelled} loading={reconcileConfirming}>
-                Cancel {reconcilePreview.length} Entr{reconcilePreview.length !== 1 ? "ies" : "y"}
-              </BtnDanger>
-            </div>
-          </Modal>
-        )}
         {pdfView && (
           <OdooPdfViewerModal url={pdfView.url} title={pdfView.title} onClose={() => setPdfView(null)} />
         )}
@@ -1844,6 +1766,86 @@ export default function OrdersTickets() {
           />
         )}
       </main>
+      {/* List-view popups: their buttons are in this view's toolbar (fixed
+          2026-10-14 — both used to sit in the detail view, so neither could show). */}
+        {fulfilledPreview && (
+          <Modal title="Close Fulfilled Orders" onClose={() => !fulfilledSaving && setFulfilledPreview(null)} width="max-w-3xl">
+            <p className="text-sm text-gray-600">
+              These open tickets are for orders Odoo shows as already delivered. Closing takes them off the packing board and
+              closes the Sales ticket as Complete with a note. Nothing is changed in Odoo, no packing or QA/RP sign-off is
+              recorded, and no one is emailed.
+            </p>
+            {[
+              ["paid", "Delivered and paid", "Ticked by default."],
+              ["owing", "Delivered, money still owing", "Not ticked by default: the customer still owes on these invoices. Closing the ticket doesn't change that; follow it up on the Invoices page."],
+            ].map(([key, title, hint]) => fulfilledPreview[key].length > 0 && (
+              <div key={key} className="mt-4">
+                <p className="text-sm font-semibold text-gray-800">{title} ({fulfilledPreview[key].length})</p>
+                <p className="text-xs text-gray-500 mb-2">{hint}</p>
+                <div className="border border-gray-100 rounded-xl divide-y divide-gray-50 max-h-72 overflow-y-auto">
+                  {fulfilledPreview[key].map(r => (
+                    <label key={r.order_id} className="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50">
+                      <input type="checkbox" className="mt-1" checked={fulfilledPick.has(r.order_id)} onChange={() => toggleFulfilled(r.order_id)} />
+                      <div className="min-w-0 text-xs">
+                        <p className="text-sm font-medium text-gray-900">
+                          {r.order_name} · {r.customer_name}
+                          {r.owing > 0 && <span className="ml-2 text-amber-700">{fmtR(r.owing)} owing</span>}
+                        </p>
+                        <p className="text-gray-500">
+                          Delivered: {(r.deliveries || []).join(", ") || "n/a"}
+                          {r.invoices?.length ? ` · Invoices: ${r.invoices.join(", ")}` : ""}
+                        </p>
+                        <p className="text-gray-400">
+                          {r.ticket_ref ? `${r.ticket_ref} (${r.ticket_status})` : "No open Sales ticket"}
+                          {r.board?.length ? ` · On packing board: ${r.board.map(b => `${b.ps_num || "entry"} ${b.status}${b.signed_off ? ", signed off" : ""}`).join("; ")}` : ""}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setFulfilledPreview(null)} disabled={fulfilledSaving}>Cancel</BtnSecondary>
+              <BtnDanger onClick={confirmCloseFulfilled} disabled={fulfilledSaving || fulfilledPick.size === 0}>
+                Close {fulfilledPick.size} Order{fulfilledPick.size !== 1 ? "s" : ""}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
+
+        {reconcilePreview && (
+          <Modal title="Reconcile Cancelled Tickets" onClose={() => setReconcilePreview(null)}>
+            <p className="text-sm text-gray-700 font-medium mb-2">
+              {reconcilePreview.length} order ticket{reconcilePreview.length !== 1 ? "s are" : " is"} still active on the board, but the Sales ticket behind {reconcilePreview.length !== 1 ? "them has" : "it has"} already closed. Confirming will cancel {reconcilePreview.length !== 1 ? "these entries" : "this entry"} so {reconcilePreview.length !== 1 ? "they stop" : "it stops"} showing on the Operations Monitor.
+            </p>
+            <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100 mb-3">
+              {reconcilePreview.map(o => (
+                <div key={o.packing_board_id} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-800 truncate">
+                      {o.ps_num || `Order ${o.order_id}`} {o.is_backorder && <span className="text-amber-600 text-xs font-normal">(backorder)</span>}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {o.customer_name || "Unknown customer"} · queued {fmtDate(o.queued_at)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <Badge color="gray">Board: {o.status}</Badge>{" "}
+                    <Badge color="red">Ticket: {o.ticket_exit_status}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-red-600 font-medium">This cannot be undone from the portal.</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setReconcilePreview(null)}>Cancel</BtnSecondary>
+              <BtnDanger onClick={confirmReconcileCancelled} loading={reconcileConfirming}>
+                Cancel {reconcilePreview.length} Entr{reconcilePreview.length !== 1 ? "ies" : "y"}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
     </div>
   );
 }

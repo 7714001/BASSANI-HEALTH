@@ -34,6 +34,7 @@ import { HorizontalTimelineCard, ActivityLogCard } from "../components/OrderTime
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import { DiscountAmountCell, DiscountTotalsCompare, ESTIMATE_NOTE } from "../components/DiscountBreakdown";
 import { roundPct, lineDiscount, orderTotals, liveOrderTotals, liveLineTaxRate, isInRequest } from "../utils/discountMath";
+import { lineStockFields } from "../utils/stockStatus";
 import OrderView from "./OrderView";
 import { UnallocatedPaymentsPanel, DepositIssueBanner, isUnallocatedError, errorText } from "../components/UnallocatedPayments";
 
@@ -999,7 +1000,6 @@ export default function SalesTickets() {
   const handlePickerAdd = (product) => {
     const label    = product.display_name || product.name;
     const baseName = parseDisplayName(label).base;
-    const stock      = Math.max(0, Math.floor(product.virtual_available || 0));
     const populated  = {
       ...newLine(),
       product_id:        product.id,
@@ -1009,7 +1009,7 @@ export default function SalesTickets() {
       price_unit:        product.list_price || 0,
       _tax_rate:         product.tax_rate   || 0,
       _sku:              product.default_code || "",
-      _stock:            stock,
+      ...lineStockFields(product),
       product_uom_qty:   1,
     };
     setQuoteLines(prev => {
@@ -1079,7 +1079,7 @@ export default function SalesTickets() {
           price_unit: p.list_price ?? l.price_unit,
           _tax_rate:  p.tax_rate ?? l._tax_rate,
           _sku:       p.default_code || l._sku,
-          _stock:     Math.max(0, p.virtual_available ?? 0),
+          ...lineStockFields(p),
         });
       });
       return { lines: next.length > 0 ? next : [newLine()], dropped };
@@ -1155,9 +1155,26 @@ export default function SalesTickets() {
       // Display only: the server carries the real discount across the edit
       // from Odoo's own lines, this is never sent back (8.61).
       discount:        l.discount || 0,
-      _tax_rate: 0, _sku: "", _stock: 0,
+      // Stock unknown until fetched (refreshLineStock) — 0 here used to show
+      // "will backorder" on every existing line (fixed 2026-10-14).
+      _tax_rate: 0, _sku: "", _stock: undefined,
     }));
     return lines.length > 0 ? lines : [newLine()];
+  };
+
+  // Live stock figures for lines loaded from an existing order. Stock only:
+  // prices on an existing quote are left exactly as they are.
+  const refreshLineStock = async (lines) => {
+    const ids = [...new Set(lines.filter(l => l.product_id).map(l => l.product_id))];
+    if (!ids.length) return;
+    try {
+      const r = await api.get("/api/products/", { params: { ids: ids.join(","), limit: ids.length } });
+      const byId = new Map((r.data.products || []).map(p => [p.id, p]));
+      setQuoteLines(prev => prev.map(l => {
+        const p = l.product_id && byId.get(l.product_id);
+        return p ? { ...l, ...lineStockFields(p), _sku: l._sku || p.default_code || "" } : l;
+      }));
+    } catch { /* stock notes just stay hidden */ }
   };
 
   const openQuoteEdit = async () => {
@@ -1188,6 +1205,7 @@ export default function SalesTickets() {
     setQuoteCustomerEditing(false);
     setQuoteTicket(detail);
     setQuoteLines(lines);
+    refreshLineStock(lines);
     setLastAddedId(null);
     setQuoteNote("");
     setQuoteMode("edit");

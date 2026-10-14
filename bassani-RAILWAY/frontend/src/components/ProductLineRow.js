@@ -13,6 +13,8 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import api from "../api";
 import { fmtR, parseDisplayName, ProductThumb } from "./UI";
+import { StockBadge, IncomingDates } from "./StockBadge";
+import { lineStockFields, stockRank, lineStockNote } from "../utils/stockStatus";
 
 export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, warehouseId, isSample }) {
   const [prodSearch, setProdSearch]     = useState(line._product_label || "");
@@ -55,11 +57,8 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
         if (warehouseId) params.warehouse_id = warehouseId;
         const r = await api.get("/api/products/", { params });
         const raw = r.data.products || [];
-        raw.sort((a, b) => {
-          const aIn = (a.virtual_available || 0) > 0;
-          const bIn = (b.virtual_available || 0) > 0;
-          return aIn === bIn ? 0 : aIn ? -1 : 1;
-        });
+        // Available now first, then stock on its way, then out of stock.
+        raw.sort((a, b) => stockRank(a) - stockRank(b));
         setSearchResults(raw);
         setDropdownOpen(true);
       } catch {
@@ -74,7 +73,6 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
   const selectProduct = (p) => {
     const label    = p.display_name || p.name;
     const baseName = parseDisplayName(label).base;
-    const stock    = Math.max(0, Math.floor(p.virtual_available || 0));
     setProdSearch(label);
     setDropdownOpen(false);
     onUpdate({
@@ -86,17 +84,17 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
       discount:            0,
       _tax_rate:           p.tax_rate   || 0,
       _sku:                p.default_code || "",
-      _stock:              stock,
+      ...lineStockFields(p),
       product_uom_qty:     1,
     });
   };
 
-  const inStockBadge = (p) => {
-    const qty = p.virtual_available || 0;
-    return qty > 0
-      ? <span className="text-[10px] text-green-600 font-medium">{Math.floor(qty)} in stock</span>
-      : <span className="text-[10px] text-red-500 font-medium">Out of stock</span>;
-  };
+  // Stock figures are known once the line was picked from search/drawer or
+  // refreshed; a line loaded from an existing order has none until its live
+  // stock is fetched (undefined), and then no note is shown rather than a
+  // false "will backorder".
+  const stockKnown = line.product_id && line._stock !== undefined && line._stock !== null;
+  const stockNote = stockKnown ? lineStockNote(line.product_uom_qty, line._stock, line._forecast ?? line._stock) : null;
 
   return (
     <tr className="border-b border-gray-100 group hover:bg-slate-50/50 transition-colors">
@@ -119,12 +117,18 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                     )}
                   </div>
                 )}
+                {stockKnown && (
+                  <div className="mt-1">
+                    <StockBadge product={{ qty_available: line._on_hand, free_qty: line._stock, virtual_available: line._forecast ?? line._stock }} />
+                  </div>
+                )}
+                {stockNote?.fromIncoming > 0 && <IncomingDates productId={line.product_id} className="mt-1" />}
               </div>
               <button
                 onClick={() => {
                   setProdSearch("");
                   setSearchResults([]);
-                  onUpdate({ product_id: null, _product_label: "", name: "", _description_sale: "", price_unit: 0, _tax_rate: 0, _stock: 0, _sku: "" });
+                  onUpdate({ product_id: null, _product_label: "", name: "", _description_sale: "", price_unit: 0, _tax_rate: 0, _stock: 0, _forecast: 0, _on_hand: 0, _sku: "" });
                 }}
                 title="Change product"
                 className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
@@ -200,8 +204,8 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                       </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-xs font-semibold text-gray-800">{fmtR(p.list_price)}</p>
-                        {inStockBadge(p)}
+                        <p className="text-xs font-semibold text-gray-800 mb-0.5">{fmtR(p.list_price)}</p>
+                        <StockBadge product={p} />
                       </div>
                     </button>
                   );
@@ -233,7 +237,10 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
           // place — Odoo handles the shortfall as a backorder (and its own
           // automatic MO where configured) at confirm time regardless.
           // Staff see the exact figures here, same as inStockBadge above.
-          const willBackorder = line.product_id && line.product_uom_qty > line._stock;
+          // 2026-10-14: split into what ships now, what waits for incoming
+          // stock (amber), and true backorder with nothing incoming (red).
+          const willBackorder = !!stockNote;
+          const noteColor = stockNote?.tone === "red" ? "text-red-600" : "text-amber-600";
           return (
             <div>
               <input
@@ -246,12 +253,14 @@ export default function ProductLineRow({ line, onUpdate, onRemove, autoFocus, wa
                   onUpdate({ product_uom_qty: v });
                 }}
                 className={`w-full text-sm text-center border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 bg-white ${
-                  willBackorder ? "border-amber-300 focus:ring-amber-300 text-amber-700" : "border-gray-200 focus:ring-bassani-300"
+                  willBackorder
+                    ? (stockNote.tone === "red" ? "border-red-300 focus:ring-red-300 text-red-700" : "border-amber-300 focus:ring-amber-300 text-amber-700")
+                    : "border-gray-200 focus:ring-bassani-300"
                 }`}
               />
               {willBackorder && (
-                <p className="text-[10px] text-amber-600 text-center mt-0.5 leading-none">
-                  {line._stock > 0 ? `${line._stock} in stock, rest backorders` : "will backorder"}
+                <p className={`text-[10px] ${noteColor} text-center mt-0.5 leading-tight`} title={stockNote.full}>
+                  {stockNote.short}
                 </p>
               )}
             </div>

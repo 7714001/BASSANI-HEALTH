@@ -2645,6 +2645,20 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 
 ---
 
+#### 8.73 — Available Now vs Incoming Stock in the Quote Builder — Built 2026-10-14, awaiting live testing
+
+> The quote builder's product search and Browse Products drawer showed Odoo's Forecasted figure as "in stock", so a product with 0 on hand and 30 on a purchase order read as "30 in stock". Product-owner decisions: base "available now" on free stock (on hand minus what's reserved for other orders), show expected arrival dates now, and give resellers/customers an "Available soon" status without numbers.
+
+- [x] `free_qty` added to `product_routes.PRODUCT_FIELDS` (warehouse-scoped like the other stock fields; live-verified on Odoo 19)
+- [x] `utils/stockStatus.js`: available now (`free_qty`), forecast, incoming (forecast less available now: what a new order can still count on, smaller than Odoo's raw incoming when some is already promised), tiers in_stock / reserved / incoming / out, `lineStockNote()` (ships now / from incoming, may delay / backorder), customer wording
+- [x] `components/StockBadge.js`: colour-coded staff badge with a plain-language tooltip; `IncomingDates` (cached 5 minutes); `CustomerStockBadge`
+- [x] `GET /api/products/{id}/incoming-stock` (any staff role): open stock moves into the caller's warehouse with expected dates and source (purchase order, production, transfer in transit, supplier), earliest first, past dates flagged overdue. Covers everything the forecast counts, unlike `/incoming` (purchase orders only). Odoo 19 has no `not child_of`, so the domain uses `"!"`. Live-verified read-only on La Farmacia
+- [x] Quote line search and Browse Products: badge, sort available now > incoming > out; drawer has "When is it expected?"
+- [x] Quote line: badge under the product, and a quantity note split into ships now / from incoming (amber, with expected dates) / backorder with nothing incoming (red)
+- [x] Fixed: Edit Quote loaded every existing line with stock 0, so each showed "will backorder"; lines now load stock live (stock only, prices untouched)
+- [x] Reseller/customer cart and catalogue: In stock / **Available soon** / Out of stock, no numbers; "Add to Order (Available soon)"; the cart note says the rest ships when new stock arrives. The reseller catalogue export no longer includes stock quantities (it did, against the no-numbers rule)
+- [ ] Live test: a product with 0 available and stock on a purchase order shows amber with its expected date; a reseller sees "Available soon"
+
 #### 8.72 — Deposit and Payment Integrity (apply, never duplicate) — Built 2026-10-14, awaiting live testing
 
 > Found live on S01205 (2026-10-14), then a read-only scan of every order: deposit invoices only show a "Down Payment" line (Odoo invoices products on delivery), so Finance had been cancelling them in Odoo. **90 of 120 deposit invoices were cancelled** (all on live orders), leaving **80 deposit payments (R360,079.90) unallocated**; on **53 (R347,671.37)** the order's final invoice was also marked paid, so the same money is probably recorded twice. Cancelling a deposit invoice unhooks its payment and leaves the final invoice nothing to deduct, so it charges and emails the full amount. Product-owner rule: Odoo is the source of truth, and the portal never creates an additional payment or invoice when Odoo already holds one; it guides the user to use what exists.

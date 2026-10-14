@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from typing import Optional
 from pydantic import BaseModel
 import base64
-from auth import get_current_user, require_admin, require_permission
+from auth import get_current_user, require_admin, require_permission, ADMIN_ROLES, TICKET_ROLES, PRODUCTION_ROLES
 from odoo_client import get_odoo_client
 from warehouse_context import resolve_warehouse_id, odoo_context, get_company_id, warehouse_location_id
 from middleware.audit import audit_log
@@ -96,7 +96,7 @@ class UOMUpdate(BaseModel):
 PRODUCT_FIELDS = [
     "id", "name", "display_name", "default_code", "type", "categ_id",
     "lst_price", "standard_price", "uom_id",
-    "qty_available", "virtual_available", "taxes_id",
+    "qty_available", "virtual_available", "free_qty", "taxes_id",
     "description", "description_sale", "active", "product_tmpl_id", "barcode",
     "image_128",
 ]
@@ -963,6 +963,64 @@ async def get_product_incoming(product_id: int, current_user: dict = Depends(req
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+
+
+async def _require_staff(current_user: dict = Depends(get_current_user)) -> dict:
+    """Any internal staff role (not reseller/customer)."""
+    if current_user.get("is_super_admin") or current_user.get("role") in (ADMIN_ROLES | TICKET_ROLES | PRODUCTION_ROLES):
+        return current_user
+    raise HTTPException(status_code=403, detail="Access denied")
+
+
+@router.get("/{product_id}/incoming-stock")
+async def get_product_incoming_stock(product_id: int, current_user: dict = Depends(_require_staff)):
+    """When stock is expected (2026-10-14): every open stock move bringing
+    this product INTO the caller's warehouse from outside it, earliest first,
+    with its expected date. Covers everything Odoo's forecast counts as
+    incoming (supplier receipts, transfers from GMP, production), unlike
+    /incoming, which reads purchase orders only. Shown to staff building a
+    quote when a product has nothing available now but stock on its way.
+    A date already past is flagged overdue (an open receipt that hasn't
+    arrived on time). Odoo 19 has no "not child_of" operator, hence "!"."""
+    from datetime import date as _date
+    odoo = get_odoo_client()
+    warehouse_id = await resolve_warehouse_id(current_user)
+    domain: list = [
+        ("product_id", "=", product_id),
+        ("state", "in", ["waiting", "confirmed", "partially_available", "assigned"]),
+    ]
+    loc = warehouse_location_id(odoo, warehouse_id)
+    if loc:
+        domain += [("location_dest_id", "child_of", loc), "!", ("location_id", "child_of", loc)]
+    else:
+        domain += [("location_dest_usage", "=", "internal"), ("location_usage", "!=", "internal")]
+    try:
+        moves = odoo.search_read(
+            "stock.move", domain=domain,
+            fields=["date", "product_uom_qty", "reference", "location_usage", "purchase_line_id", "production_id"],
+            limit=50, order="date asc",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
+    today = _date.today().isoformat()
+    rows = []
+    for m in moves:
+        if m.get("purchase_line_id"):
+            source = "Purchase order"
+        elif m.get("production_id"):
+            source = "Production"
+        elif m.get("location_usage") == "transit":
+            source = "Transfer in transit"
+        elif m.get("location_usage") == "supplier":
+            source = "Supplier"
+        else:
+            source = "Receipt"
+        day = (m.get("date") or "")[:10]
+        rows.append({
+            "date": day or None, "qty": m.get("product_uom_qty") or 0, "reference": m.get("reference") or "",
+            "source": source, "overdue": bool(day) and day < today,
+        })
+    return {"moves": rows, "total": sum(r["qty"] for r in rows)}
 
 
 @router.get("/{product_id}/movements")

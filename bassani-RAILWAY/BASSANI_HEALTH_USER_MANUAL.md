@@ -642,8 +642,13 @@ Once you know what the customer wants:
 
 1. Open the ticket and click **Build Quote**
 2. You are now in the quote builder — a full-page form that mirrors an Odoo quotation
-3. Search for products by name or SKU — results come live from Odoo (no catalogue limit)
-4. Enter quantities and confirm unit prices
+3. Search for products by name or SKU — results come live from Odoo (no catalogue limit). Each product shows its stock in colour:
+   - **Green, "12 available"**: on the shelf now and not reserved for another order (with "+18 incoming" if more is on its way)
+   - **Amber, "0 available · 30 incoming"**: nothing on the shelf, stock on its way. The order will wait for it, so the customer may be delayed. In **Browse Products**, click **When is it expected?** to see the expected dates (an overdue date means a delivery is late)
+   - **Amber, "10 on hand, all reserved"**: there's stock, but it's already promised to other orders
+   - **Red, "Out of stock"**: nothing available and nothing on its way; it will be a backorder
+   Hover over a badge for an explanation. Products available now are listed first.
+4. Enter quantities and confirm unit prices. Under the quantity, the line tells you what happens to it: **ships now**, **incoming** (amber, with the expected date under the product) or **backorder** (red, nothing on its way)
 5. Select the warehouse the order should draw from
 6. Add any notes for the order
 7. Click **Create Quote in Odoo**
