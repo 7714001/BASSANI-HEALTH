@@ -169,6 +169,7 @@ async def list_products(
     warehouse_id:  Optional[int] = Query(None),   # explicit override — quote builder passes the quote's warehouse
     in_stock_only: bool          = Query(False),   # filter to products with qty_available > 0
     incoming_only: bool          = Query(False),   # filter to products with nothing on hand but forecasted stock incoming
+    available_only: bool         = Query(False),   # filter to products with free stock (on hand, not reserved) > 0 (2026-10-14)
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -199,6 +200,11 @@ async def list_products(
 
     if in_stock_only:
         domain.append(("qty_available", ">", 0))
+
+    if available_only:
+        # What a new order can take today: on the shelf and not already
+        # reserved for another order (Odoo free_qty, warehouse-scoped).
+        domain.append(("free_qty", ">", 0))
 
     if incoming_only:
         # Nothing physically on the shelf yet, but Odoo is forecasting stock

@@ -1635,11 +1635,14 @@ Admins have a broad view of the portal, but specific actions depend on what the 
 
 Go to **Products** to view the full product catalogue. Each product shows:
 - On-hand stock (physical units in the warehouse)
+- **Available** stock: on hand and not already reserved for another order, so what a new order can take today. Green when there's some, amber when there's none but more is coming, red when there's nothing at all
 - Forecasted stock (on-hand minus reservations from confirmed orders plus incoming)
 - Tax rate (the VAT% configured in Odoo for that product)
 - Price
 
-**Why Forecasted stock matters:** If a product shows 150 on hand but 0 forecasted, it means 150 units are reserved against confirmed orders that haven't been delivered yet. Click the icon next to the Forecasted figure to see exactly which orders are holding that stock.
+**Why Available matters:** If a product shows 150 on hand but 0 available, all 150 units are reserved against confirmed orders that haven't been delivered yet. Click the amber icon next to the Available figure to see exactly which orders are holding that stock. The truck icon next to Forecasted shows what's on its way.
+
+**Stock filter:** **On Hand** (anything on the shelf), **Available** (only what a new order can take today), **All**, or **Incoming** (nothing on hand, stock on its way). The Excel export includes the Available column.
 
 **Adding/editing products:** Products are managed in Odoo and synced automatically to the portal. Do not use the portal to create or edit products — use Odoo directly so all pricing, tax, and stock configurations are correct. The portal reflects Odoo as the source of truth.
 
@@ -2666,7 +2669,7 @@ The portal will enter a degraded state. The health endpoint (`/health`) will rep
 One or more products on the order are configured in Odoo with an invoicing policy of "Ordered quantities". Partial deliveries require the "Delivered quantities" policy so each invoice reflects only what has actually shipped. **Admin / sales:** Open the affected product in Odoo, go to the General Information tab, set Invoicing Policy to "Delivered quantities", and save. Then return to the ticket and retry confirming. All Bassani products should have this policy — if you see this error it means the Odoo product record was not updated correctly. **Resellers:** Contact Bassani directly — this cannot be resolved from the reseller portal and Bassani's team will fix it promptly.
 
 **Q: A product shows 0 forecasted stock but I can see it on the shelf.**  
-Check the **Reservations** drill-down — click the icon next to the Forecasted figure in the Products table. This shows every confirmed order that is reserving those units. The forecasted figure is on-hand minus reserved, so 0 forecasted = all on-hand units are committed to open orders. Those units are not available to promise to new orders until the existing orders are fulfilled or cancelled.
+Check the **Reservations** drill-down — click the amber icon next to the Available figure in the Products table. This shows every confirmed order that is reserving those units. The forecasted figure is on-hand minus reserved, so 0 forecasted = all on-hand units are committed to open orders. Those units are not available to promise to new orders until the existing orders are fulfilled or cancelled.
 
 ---
 

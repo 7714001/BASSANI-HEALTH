@@ -22,7 +22,7 @@ import {
 } from "../components/UI";
 import { validateSAID, validatePassport } from "../utils/validators";
 import { fetchAllProducts } from "../utils/productExport";
-import { lineStockFields, customerAvailability, stockRank, lineStockNote } from "../utils/stockStatus";
+import { lineStockFields, customerAvailability, stockRank, lineStockNote, stockInfo } from "../utils/stockStatus";
 import { CustomerStockBadge } from "../components/StockBadge";
 
 const ENTITY_TYPES = [
@@ -206,7 +206,7 @@ export function Products() {
   }, []);
 
   useEffect(() => {
-    const params = stockFilter === "in_stock" ? { in_stock_only: true } : {};
+    const params = ["in_stock", "available"].includes(stockFilter) ? { in_stock_only: true } : {};
     api.get("/api/products/categories", { params })
       .then(r => setCategories(r.data.categories || []))
       .catch(() => {});
@@ -223,6 +223,7 @@ export function Products() {
       if (search) params.search = search;
       if (cat !== "all") params.category_id = cat;
       if (stockFilter === "in_stock") params.in_stock_only = true;
+      else if (stockFilter === "available") params.available_only = true;
       else if (stockFilter === "incoming") params.incoming_only = true;
       const r = await api.get("/api/products/", { params });
       setProducts(r.data.products); setTotal(r.data.total);
@@ -313,6 +314,7 @@ export function Products() {
       if (search) params.search = search;
       if (cat !== "all") params.category_id = cat;
       if (stockFilter === "in_stock") params.in_stock_only = true;
+      else if (stockFilter === "available") params.available_only = true;
       else if (stockFilter === "incoming") params.incoming_only = true;
       const { products: rows, warehouseName } = await fetchAllProducts(params);
       const sheet = rows.map(p => ({
@@ -323,6 +325,7 @@ export function Products() {
         "Cost (R)": (p.standard_price ?? 0).toFixed(2),
         "Tax %": p.tax_rate ?? 0,
         "On Hand": p.qty_available ?? 0,
+        "Available": p.free_qty ?? 0,
         Forecasted: p.virtual_available ?? 0,
         Barcode: p.barcode || "",
         "Reseller Catalog": catalog.has(p.id) ? "Yes" : "No",
@@ -365,6 +368,11 @@ export function Products() {
                 onClick={() => { setLoading(true); setProducts([]); setStockFilter("in_stock"); setPagination(p => ({...p, pageIndex:0})); }}
                 className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "in_stock" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
               >On Hand</button>
+              <button
+                onClick={() => { setLoading(true); setProducts([]); setStockFilter("available"); setPagination(p => ({...p, pageIndex:0})); }}
+                title="On the shelf and not already reserved for another order: what a new order can take today"
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "available" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+              >Available</button>
               <button
                 onClick={() => { setLoading(true); setProducts([]); setStockFilter("all"); setPagination(p => ({...p, pageIndex:0})); }}
                 className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${stockFilter === "all" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
@@ -492,20 +500,34 @@ export function Products() {
                 : <span className="text-xs text-amber-600" title="No Customer Tax configured on this product in Odoo">No tax set</span>
             },
             { accessorKey:"qty_available", header:"On Hand", enableSorting:false, cell:({ row:{original:p} })=>{ const q=p.qty_available??0; return <span className="flex items-center gap-1.5"><span className={stockColor(q)}>{q}</span><button onClick={e=>{e.stopPropagation();openHistory(p);}} title="View stock movement history" className="text-gray-400 hover:text-gray-600 transition-colors"><History size={13}/></button><button onClick={e=>{e.stopPropagation();openLots(p);}} title="View lot / batch breakdown" className="text-gray-400 hover:text-bassani-600 transition-colors"><Layers size={13}/></button></span>; } },
-            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>{
-              const onHand = p.qty_available ?? 0;
-              const forecasted = p.virtual_available ?? 0;
-              const tiedUp = onHand - forecasted > 0.001;
-              const arriving = forecasted - onHand > 0.001;
+            // Available (2026-10-14): Odoo free stock, on the shelf and not
+            // reserved for another order. Coloured with the same tiers as the
+            // quote builder (utils/stockStatus.js). The reservations
+            // drill-down sits here now: it explains On Hand vs Available.
+            { accessorKey:"free_qty", header:"Available", enableSorting:false, cell:({ row:{original:p} })=>{
+              const s = stockInfo(p);
+              const color = s.tier === "in_stock" ? "text-green-700 font-semibold" : s.tier === "out" ? "text-red-500" : "text-amber-700 font-semibold";
+              const reserved = (p.qty_available ?? 0) - (p.free_qty ?? 0) > 0.001;
               return (
-                <span className="flex items-center gap-1.5">
-                  <span className="text-gray-500">{forecasted}</span>
-                  {tiedUp && (
-                    <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="See which orders this stock is tied up in"
+                <span className="flex items-center gap-1.5"
+                  title="On the shelf and not already reserved for another order: what a new order can take today">
+                  <span className={color}>{p.free_qty ?? 0}</span>
+                  {reserved && (
+                    <button onClick={e=>{e.stopPropagation();openReservations(p);}} title="Some of the stock on hand is reserved: see which orders"
                       className="text-amber-500 hover:text-amber-600 transition-colors">
                       <PackageSearch size={13} />
                     </button>
                   )}
+                </span>
+              );
+            } },
+            { accessorKey:"virtual_available", header:"Forecasted", enableSorting:false, meta:{className:"hidden md:table-cell"}, cell:({ row:{original:p} })=>{
+              const onHand = p.qty_available ?? 0;
+              const forecasted = p.virtual_available ?? 0;
+              const arriving = forecasted - onHand > 0.001;
+              return (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-gray-500">{forecasted}</span>
                   {arriving && (
                     <button onClick={e=>{e.stopPropagation();openIncoming(p);}} title="See which incoming purchase order this forecasted stock is coming from"
                       className="text-blue-500 hover:text-blue-600 transition-colors">

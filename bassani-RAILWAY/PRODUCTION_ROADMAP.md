@@ -2657,6 +2657,7 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [x] Quote line: badge under the product, and a quantity note split into ships now / from incoming (amber, with expected dates) / backorder with nothing incoming (red)
 - [x] Fixed: Edit Quote loaded every existing line with stock 0, so each showed "will backorder"; lines now load stock live (stock only, prices untouched)
 - [x] Reseller/customer cart and catalogue: In stock / **Available soon** / Out of stock, no numbers; "Add to Order (Available soon)"; the cart note says the rest ships when new stock arrives. The reseller catalogue export no longer includes stock quantities (it did, against the no-numbers rule)
+- [x] Products list: **Available** column between On Hand and Forecasted (same colour tiers; the reservations drill-down moved next to it, since it explains On Hand vs Available), **Available** stock filter (`available_only` = `free_qty > 0`), Available in the Excel export
 - [ ] Live test: a product with 0 available and stock on a purchase order shows amber with its expected date; a reseller sees "Available soon"
 
 #### 8.72 — Deposit and Payment Integrity (apply, never duplicate) — Built 2026-10-14, awaiting live testing
