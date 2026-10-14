@@ -246,6 +246,10 @@ class TicketDepositRegister(BaseModel):
     # leaving a junk invoice and payment in the books; Request Release on
     # Account is the proper route for a customer with a payment agreement.
     small_deposit_reason: Optional[str] = None
+    # 8.69d — False when Finance chooses not to email the customer (and their
+    # reseller), e.g. recording a payment on an old order already collected.
+    # Defaults True so every other caller behaves exactly as before.
+    notify_customer: bool = True
 
 
 TOKEN_DEPOSIT_PCT = 10.0
@@ -256,10 +260,18 @@ class TicketBalancePayment(BaseModel):
     date: str           # YYYY-MM-DD
     journal_id: int
     note: Optional[str] = ""
+    # 8.69d — False when Finance chooses not to email the customer (and their
+    # reseller), e.g. recording a payment on an old order already collected.
+    # Defaults True so every other caller behaves exactly as before.
+    notify_customer: bool = True
 
 
 class UseExistingInvoiceBody(BaseModel):
     invoice_id: int
+    # 8.69d — False when Finance chooses not to email the customer (and their
+    # reseller), e.g. recording a payment on an old order already collected.
+    # Defaults True so every other caller behaves exactly as before.
+    notify_customer: bool = True
 
 
 class TicketFromOrder(BaseModel):
@@ -2406,7 +2418,8 @@ async def use_existing_invoice(
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
                 "at": now,
-                "note": f"Used existing Odoo invoice {inv['name']} ({inv['payment_state']}) in place of a new deposit",
+                "note": f"Used existing Odoo invoice {inv['name']} ({inv['payment_state']}) in place of a new deposit"
+                        + ("" if body.notify_customer else ". Customer not emailed"),
             }},
         },
     )
@@ -2417,6 +2430,7 @@ async def use_existing_invoice(
         detail={
             "invoice_id": body.invoice_id, "invoice_name": inv["name"], "payment_state": inv["payment_state"],
             "amount_total": inv["amount_total"], "amount_residual": inv["amount_residual"],
+            "notify_customer": body.notify_customer,
         },
     )
 
@@ -2425,7 +2439,7 @@ async def use_existing_invoice(
     # must never be reported back as if linking the invoice failed.
     packing_board_warning = None
     try:
-        await _queue_packing_board(order_id, background_tasks)
+        await _queue_packing_board(order_id, background_tasks, notify=body.notify_customer)
     except Exception as e:
         packing_board_warning = str(e)
         logger.warning("queue_packing_board_after_existing_invoice_failed",
@@ -2884,7 +2898,8 @@ async def register_deposit(
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
                 "at": now,
                 "note": (body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}")
-                        + (f" (small deposit: {small_deposit_reason})" if is_small_deposit else ""),
+                        + (f" (small deposit: {small_deposit_reason})" if is_small_deposit else "")
+                        + ("" if body.notify_customer else ". Customer not emailed"),
             }},
         },
     )
@@ -2894,7 +2909,8 @@ async def register_deposit(
         entity_label=ticket.get("customer_name", ""),
         user=current_user,
         detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date,
-                "small_deposit": is_small_deposit, "small_deposit_reason": small_deposit_reason},
+                "small_deposit": is_small_deposit, "small_deposit_reason": small_deposit_reason,
+                "notify_customer": body.notify_customer},
     )
 
     # Gate enforcement point — nothing reaches the packing board without this.
@@ -2906,7 +2922,7 @@ async def register_deposit(
     # when moving a ticket to confirmed_wip with none created yet.
     packing_board_warning = None
     try:
-        await _queue_packing_board(order_id, background_tasks)
+        await _queue_packing_board(order_id, background_tasks, notify=body.notify_customer)
     except Exception as e:
         packing_board_warning = str(e)
         logger.warning("queue_packing_board_after_deposit_failed",
@@ -3958,14 +3974,16 @@ async def register_balance_payment(
         entity_label=ticket.get("customer_name", ""),
         user=current_user,
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
-                "date": body.date, "payment_state": final_state, "amount_residual": final_residual},
+                "date": body.date, "payment_state": final_state, "amount_residual": final_residual,
+                "notify_customer": body.notify_customer},
     )
     # 8.69 — if this paid a held order's invoice, tell the customer it's ready.
+    # notify_customer=False (8.69d) still releases the hold, just without emails.
     released = await release_collection_holds(order_id=ticket["order_id"], background_tasks=background_tasks,
-                                              actor=current_user)
+                                              actor=current_user, notify=body.notify_customer)
     await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
     return {"success": True, "invoice_id": invoice_id, "payment_state": final_state, "amount_residual": final_residual,
-            "customer_notified": bool(released)}
+            "customer_notified": bool(released) and body.notify_customer, "released": bool(released)}
 
 
 @router.get("/from-order/preflight")

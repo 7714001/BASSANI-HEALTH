@@ -613,17 +613,21 @@ def _invoice_is_paid(inv: Optional[dict]) -> bool:
 
 async def _send_collection_notices(entry: dict, ticket: Optional[dict], notice: dict,
                                    background_tasks, actor: Optional[dict], payment_received: bool,
-                                   note: Optional[str] = None) -> None:
+                                   note: Optional[str] = None, notify: bool = True) -> None:
     """The customer/reseller "your order is ready" notices, plus the Sales
     ticket status, exactly as Mark Complete has always sent them. Called at
     Mark Complete when nothing is owing, or later by release_collection_holds
-    once payment lands."""
+    once payment lands. notify=False moves the Sales ticket on but emails
+    neither the customer nor the reseller (8.69d: Finance chose not to, e.g.
+    the customer already collected)."""
     order_id = str(entry.get("order_id"))
     routing = await get_email_routing()
+    # _sync_sales_ticket only emails the customer when given background_tasks.
+    sync_tasks = background_tasks if notify else None
     if notice.get("kind") == "partial":
-        await _sync_sales_ticket(order_id, "partially_fulfilled", background_tasks=background_tasks,
+        await _sync_sales_ticket(order_id, "partially_fulfilled", background_tasks=sync_tasks,
                                  actor=actor, payment_received=payment_received, note=note)
-        if entry.get("reseller_id"):
+        if notify and entry.get("reseller_id"):
             _res = await col("resellers").find_one({"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
             if _res and _res.get("email"):
                 background_tasks.add_task(
@@ -637,9 +641,9 @@ async def _send_collection_notices(entry: dict, ticket: Optional[dict], notice: 
                     cc=routing.get("order_cc") or None,
                 )
         return
-    await _sync_sales_ticket(order_id, "ready_for_collection", background_tasks=background_tasks,
+    await _sync_sales_ticket(order_id, "ready_for_collection", background_tasks=sync_tasks,
                              actor=actor, payment_received=payment_received, note=note)
-    if entry.get("reseller_id"):
+    if notify and entry.get("reseller_id"):
         _res = await col("resellers").find_one({"id": entry["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _res and _res.get("email"):
             background_tasks.add_task(
@@ -726,6 +730,7 @@ async def release_collection_holds(
     invoice_ids: Optional[list] = None,
     background_tasks=None,
     actor: Optional[dict] = None,
+    notify: bool = True,
 ) -> list:
     """The single place a held "ready for collection" notice is released
     (8.69). Finds held entries (by order and/or invoice), re-reads each final
@@ -734,6 +739,11 @@ async def release_collection_holds(
     customer_notified_at, logs it. Idempotent: an entry is claimed with a
     conditional update before anything is sent, so two callers racing (the
     poll and a button) can never notify twice. Never raises.
+
+    notify=False (8.69d, Finance's choice on Expected Payments) still releases
+    the hold and moves the ticket on, but sends no customer or reseller email;
+    customer_notified_at stays empty and customer_notice_skipped is set, so
+    nothing later sends it either (the entry is already released).
 
     Called after every payment path: Register Balance Payment / deposit on
     the ticket, Register Payment and Apply Credit on invoices, bank
@@ -774,7 +784,8 @@ async def release_collection_holds(
         now = datetime.now(timezone.utc)
         claimed = await col("packing_board").find_one_and_update(
             {"_id": entry["_id"], "payment_hold": True, "collection_released_at": None},
-            {"$set": {"collection_released_at": now, "customer_notified_at": now,
+            {"$set": {"collection_released_at": now, "customer_notified_at": now if notify else None,
+                      "customer_notice_skipped": not notify,
                       "collection_released_by": actor.get("name") or actor.get("username") or "Automatic"}},
             return_document=True,
         )
@@ -784,7 +795,9 @@ async def release_collection_holds(
         notice = entry.get("held_notice") or {"kind": "full"}
         await _send_collection_notices(
             claimed, ticket, notice, tasks, actor, payment_received=True,
-            note=f"Payment received ({inv['name']}), customer told the order is ready to collect",
+            note=(f"Payment received ({inv['name']}), customer told the order is ready to collect" if notify
+                  else f"Payment received ({inv['name']}). Customer not emailed (chosen by {actor.get('name') or 'Finance'})"),
+            notify=notify,
         )
         claimed.pop("_id", None)
         await push_update(_with_age(claimed))
@@ -792,7 +805,8 @@ async def release_collection_holds(
             "packing.payment_hold_released", "packing_board", str(entry["order_id"]),
             entity_label=entry.get("customer_name", ""), user=actor if actor.get("id") else None,
             detail={"invoice_id": entry["invoice_id"], "invoice_name": inv.get("name"),
-                    "payment_state": inv.get("payment_state"), "released_by": claimed.get("collection_released_by")},
+                    "payment_state": inv.get("payment_state"), "released_by": claimed.get("collection_released_by"),
+                    "customer_notified": notify},
         )
         released.append(str(entry["order_id"]))
     if released:

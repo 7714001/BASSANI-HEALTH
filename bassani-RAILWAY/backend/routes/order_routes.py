@@ -2366,8 +2366,13 @@ def _order_delivery_picking_ids(odoo, order_id: int) -> list:
     return open_ids + done_ids
 
 
-async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks) -> None:
+async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks, notify: bool = True) -> None:
     """
+    notify=False (8.69d, Finance's Expected Payments) skips the emails to the
+    customer and their reseller (the "order confirmed" and backorder notices),
+    for a deposit recorded on an old order the customer may already have
+    collected. Internal alerts still go.
+
     Create the packing board entry ("order ticket") for a confirmed sale order
     and advance its linked Sales ticket to confirmed_wip.
 
@@ -2557,7 +2562,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
             for i in items if not i.get("is_backordered")
         ]
 
-    if comm_lookup and comm_lookup.get("reseller_id"):
+    if notify and comm_lookup and comm_lookup.get("reseller_id"):
         _reseller = await col("resellers").find_one({"id": comm_lookup["reseller_id"]}, {"email": 1, "name": 1, "_id": 0})
         if _reseller and _reseller.get("email"):
             if is_partial:
@@ -2592,7 +2597,7 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks)
     # to be told); "order confirmed" (non-partial) and "ready for collection"
     # are already covered by the proforma email and
     # send_order_ready_for_collection_customer respectively.
-    if is_partial and order_data.get("partner_id"):
+    if notify and is_partial and order_data.get("partner_id"):
         from routes.packing_board_routes import _resolve_customer_notification_recipients
         _cust_email, _cust_cc = await _resolve_customer_notification_recipients(odoo, order_data["partner_id"][0])
         if _cust_email:

@@ -39,6 +39,21 @@ const ARRANGEMENT_LABEL = {
 const DEPOSIT_PCT = 50;        // the deposit asked for on the pro-forma
 const TOKEN_DEPOSIT_PCT = 10;  // matches ticket_routes.TOKEN_DEPOSIT_PCT
 
+// The one place Finance chooses whether a customer is emailed (8.69d). Many
+// orders on this page are old and already collected, so it's off unless the
+// customer is genuinely waiting to hear (a held, packed order).
+function NotifyCustomerCheckbox({ checked, onChange, hint }) {
+  return (
+    <label className="flex items-start gap-2 mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 cursor-pointer">
+      <input type="checkbox" className="mt-0.5" checked={checked} onChange={e => onChange(e.target.checked)} />
+      <span className="text-xs text-gray-700">
+        <span className="font-semibold">Email the customer and their sales agent</span>
+        <span className="block text-gray-500 mt-0.5">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
 export default function ExpectedPayments() {
   const navigate = useNavigate();
   const [view, setView] = useState("waiting");
@@ -51,6 +66,7 @@ export default function ExpectedPayments() {
   const [payRow, setPayRow] = useState(null);
   const [linkRow, setLinkRow] = useState(null);
   const [linking, setLinking] = useState(false);
+  const [linkNotify, setLinkNotify] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,7 +109,9 @@ export default function ExpectedPayments() {
     const r = linkRow;
     setLinking(true);
     try {
-      const { data } = await api.post(`/api/tickets/${r.ticket_id}/use-existing-invoice`, { invoice_id: r.invoice_id });
+      const { data } = await api.post(`/api/tickets/${r.ticket_id}/use-existing-invoice`, {
+        invoice_id: r.invoice_id, notify_customer: linkNotify,
+      });
       if (data.warning) toast.error(data.warning, { duration: 8000 });
       else toast.success(`${r.invoice_name} linked as the deposit. The order is now on the packing board.`);
       setLinkRow(null);
@@ -246,7 +264,7 @@ export default function ExpectedPayments() {
                   cell: ({ row: { original: r } }) => (
                     <div className="flex items-center gap-2 justify-end" onClick={e => e.stopPropagation()}>
                       {r.pay_mode === "link" && (
-                        <button onClick={() => setLinkRow(r)}
+                        <button onClick={() => { setLinkNotify(false); setLinkRow(r); }}
                           className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md border bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100">
                           <Link2 size={11} />Link Invoice
                         </button>
@@ -289,7 +307,11 @@ export default function ExpectedPayments() {
             Linking it counts it as this order's deposit, so no second deposit invoice is raised, and the order moves to the
             packing board. Only do this if that payment really is for this order.
           </p>
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="mt-4">
+            <NotifyCustomerCheckbox checked={linkNotify} onChange={setLinkNotify}
+              hint="Sends the sales agent's order confirmation, and the customer's backorder notice if part of the order is out of stock. Leave unticked for an old order the customer has already collected." />
+          </div>
+          <div className="flex justify-end gap-2">
             <BtnSecondary onClick={() => setLinkRow(null)} disabled={linking}>Cancel</BtnSecondary>
             <BtnPrimary onClick={doLink} disabled={linking}>
               {linking ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
@@ -316,6 +338,11 @@ function RecordPaymentModal({ row, onClose, onDone }) {
   const maxAmount = isDeposit ? Math.max(row.order_total - row.amount_paid, 0)
     : isAdvance ? row.amount_due : (row.invoice_residual ?? row.amount_due);
   const defaultAmount = isDeposit ? row.amount_due : maxAmount;
+  // Where this action can email anyone: a deposit (order confirmed / backorder
+  // notices) or paying a held order's invoice (ready to collect). Advance
+  // payments and older packed orders send nothing, so no choice is shown.
+  const canNotify = isDeposit || row.stage === "packed_waiting";
+  const [notify, setNotify] = useState(row.stage === "packed_waiting");
   const [journals, setJournals] = useState([]);
   const [loadingJournals, setLoadingJournals] = useState(true);
   const [form, setForm] = useState({
@@ -357,6 +384,7 @@ function RecordPaymentModal({ row, onClose, onDone }) {
           invoice_type: "fixed", amount, date: form.date, journal_id: parseInt(form.journal_id),
           note: form.note || undefined,
           small_deposit_reason: isSmallDeposit ? form.small_deposit_reason.trim() : undefined,
+          notify_customer: notify,
         });
         if (data.warning) toast.error(data.warning, { duration: 8000 });
         else toast.success("Deposit registered. The order is now on the packing board.");
@@ -369,8 +397,10 @@ function RecordPaymentModal({ row, onClose, onDone }) {
       } else {
         const { data } = await api.post(`/api/tickets/${row.ticket_id}/register-payment`, {
           amount, date: form.date, journal_id: parseInt(form.journal_id), note: form.note || undefined,
+          notify_customer: canNotify ? notify : false,
         });
         if (data.customer_notified) toast.success("Payment recorded. The customer has been told their order is ready to collect.");
+        else if (data.released) toast.success("Payment recorded. The order is ready for collection; the customer was not emailed.");
         else if (data.amount_residual > 0) toast.success(`Payment recorded. ${fmtR(data.amount_residual)} still owing.`);
         else toast.success("Payment recorded.");
       }
@@ -452,6 +482,12 @@ function RecordPaymentModal({ row, onClose, onDone }) {
         <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
           placeholder={`e.g. EFT received ${fmtDate(new Date())}, ref ${row.order_name}`} />
       </FormGroup>
+      {canNotify && (
+        <NotifyCustomerCheckbox checked={notify} onChange={setNotify}
+          hint={isDeposit
+            ? "Sends the sales agent's order confirmation, and the customer's backorder notice if part of the order is out of stock. Leave unticked for an old order the customer has already collected."
+            : "Tells the customer their order is ready to collect once this payment clears the invoice. Untick if they've already collected or been told."} />
+      )}
       <div className="flex justify-end gap-2 mt-4">
         <BtnSecondary onClick={onClose} disabled={saving}>Cancel</BtnSecondary>
         <BtnPrimary onClick={submit} disabled={saving || loadingJournals}>
