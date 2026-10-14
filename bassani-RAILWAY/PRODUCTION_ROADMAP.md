@@ -2525,6 +2525,15 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [ ] Live test: a 50% deposit order through Mark Complete, then balance paid in Odoo directly, released by the poll
 - [ ] Before deploy: review Expected Payments > Packed & waiting for orders already at Ready for Collection with a balance owing, since Mark as Collected now blocks them
 
+**8.69d — Deposits on Expected Payments; Finance chooses whether the customer is emailed (2026-10-14)**
+- [x] Gap found live: Expected Payments only ever listed balances (pay before collection, and packed deposit orders), so a confirmed order waiting on its 50% deposit never appeared. New **Deposits due** tab: one row per awaiting-deposit order, expected deposit = 50% of the order total less anything already paid on its posted invoices, age tier from the same 72h rule as the Sales ticket and Operations Monitor (`services/age_tier.ticket_age_fields`)
+- [x] Row states: Deposit due; Paid in Odoo, not linked (Link Invoice, via `use-existing-invoice`); Deposit received, not on packing board (Admin Override retry); Release / pay-before-collection requested; Account customer, not released automatically (reason shown). Samples and orders cancelled in Odoo are left out
+- [x] Tickets whose order was confirmed directly in Odoo (still at Quote) or carry the legacy Sale Order stage are moved to Awaiting Deposit as the page loads, by the same auto-sync `get_ticket` uses (extracted into `ticket_routes._advance_ticket_to_odoo_state`)
+- [x] Record Deposit: pre-filled with what's left of the 50%; any amount up to the order total; under 10% warns and asks for the reason the backend already requires
+- [x] Counts and totals cover every tab whichever is open (the Packed & waiting count used to read 0 on other tabs)
+- [x] "Email the customer and their sales agent" choice on Record Deposit, Link Invoice and Record Payment (`notify_customer` on `register-deposit`, `use-existing-invoice`, `register-payment`, default true elsewhere so other screens are unchanged). Off by default for deposits and links (many tickets are old and already collected); on for packed orders held awaiting payment. Threaded through `order_routes._queue_packing_board(notify=)` and `packing_board_routes.release_collection_holds(notify=)`; recorded in the Activity Log and audit trail, and a payment released without an email stamps `customer_notice_skipped`
+- [ ] Live test: an awaiting-deposit order appears, a Quote-stage ticket confirmed in Odoo is advanced, a deposit under 10% asks for a reason, Link Invoice works, unticked email sends nothing
+
 ### Definition of Done
 - [x] Three ways past the deposit gate (deposit, release on account, pay before collection), each recorded and audit-logged
 - [x] A deposit or pay-before-collection customer is only told the order is ready once it's paid in full, automatically, however the payment is recorded
@@ -2633,6 +2642,37 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 ### Definition of Done
 - [ ] A deposit order's customer is never told to collect, and can't be marked collected, while the balance is unpaid
 - [ ] On-account, sample and fully-paid orders are unaffected
+
+---
+
+#### 8.72 — Deposit and Payment Integrity (apply, never duplicate) — Built 2026-10-14, awaiting live testing
+
+> Found live on S01205 (2026-10-14), then a read-only scan of every order: deposit invoices only show a "Down Payment" line (Odoo invoices products on delivery), so Finance had been cancelling them in Odoo. **90 of 120 deposit invoices were cancelled** (all on live orders), leaving **80 deposit payments (R360,079.90) unallocated**; on **53 (R347,671.37)** the order's final invoice was also marked paid, so the same money is probably recorded twice. Cancelling a deposit invoice unhooks its payment and leaves the final invoice nothing to deduct, so it charges and emails the full amount. Product-owner rule: Odoo is the source of truth, and the portal never creates an additional payment or invoice when Odoo already holds one; it guides the user to use what exists.
+
+- [x] `backend/deposit_integrity.py`: `order_deposit_state()` (posted and cancelled deposit invoices, final invoices, whether the deposit is missing, whether it can be restored, and which unallocated payments came from a cancelled deposit), `customer_unallocated()`, `invoice_outstanding()`, `apply_credit()` (Odoo's `js_assign_outstanding_line`), `restore_deposit_invoice()`. Live-verified read-only against S01205 (flagged, not restorable: final invoice exists), S00781 and S01075 (flagged, restorable, stranded payment found)
+- [x] **Apply, never duplicate:** `register-payment`, `register-deposit` and `PUT /api/invoices/{id}/pay` refuse (409 `unallocated_payments`) when the customer already has unallocated payments or credits, unless `confirm_new_payment`. Every payment window (Sales ticket deposit and balance, Expected Payments, Invoices / customer profile / Order Passport via the shared `RegisterPaymentModal`) lists them first with Apply, and only records a new payment after "this is a separate payment that has just arrived" is ticked. New `GET /api/tickets/{id}/unallocated-payments`, `POST /api/tickets/{id}/apply-payment`; `register-deposit` takes `use_credit_line_id` to pay the new deposit invoice with an existing payment. `outstanding-credits` opened to anyone who can record payments
+- [x] **Cancelled deposit:** the Sales ticket shows a red banner with the stranded payment; Finance can **Restore Deposit Invoice** (`POST /api/tickets/{id}/restore-deposit`: reset to draft, post again with its original number, re-apply its payment) while no final invoice exists. After that, the banner tells Finance to sort it out in Odoo
+- [x] **Mark Complete stops** (409 `deposit_cancelled`) before validating the delivery when the deposit invoice was cancelled; Finance or an admin can continue with a reason (`deposit_override_reason`, audited). `_create_final_invoice` refuses too, covering Retry and the reconciliation wizard
+- [x] **Final invoice audit:** every attempt is logged (`packing.final_invoice_created` / `packing.final_invoice_failed`) with the invoice, total, amount owing, deposit deducted (or none), who it was emailed to, what triggered it (Mark Complete, retry, reconciliation) and who; plus a line in the ticket's Activity Log
+- [x] **Deposit invoices show their order:** invoice detail returns `deposit_for_order` (order, total, %, items); shown on the Invoices page view (outside the printed invoice) and the customer profile's invoice window, explaining that the final invoice lists the items and deducts the deposit (customer wording for resellers/customers)
+- [x] OrderPassport's own copy of the payment window replaced by the shared `RegisterPaymentModal` (its journal list wasn't limited to the invoice's company)
+- [ ] Live test: Restore Deposit on one restorable order (e.g. S00781) and check the invoice keeps its number, is paid by the original payment, and the final invoice later deducts it
+- [ ] Live test: an apply from each window (deposit, balance, invoice) and a confirmed new payment
+- [ ] Clean-up: Finance works through the 53 likely double-recorded orders against the bank (list exported 2026-10-14)
+
+**8.72b — Already-fulfilled orders (2026-10-14).** Found live the same day: 8.69d's Expected Payments moved old portal tickets (orders confirmed, delivered and paid entirely in Odoo) to Awaiting Deposit and offered Link Invoice on them; Finance linked many, which queued them on the packing board. No Odoo records were created (read-only check: no deposit invoice since 6 Oct was on an already-delivered order), but running them through packing would record false packing and QA/RP sign-offs and could email customers who collected weeks ago.
+- [x] `order_routes.order_fulfilment_state()` (batched: an order is delivered when it has outgoing deliveries and all are done; plus what's owing on its posted invoices). Live-verified read-only (S00780, S01205 delivered and paid; S00781, S01206, S01219 open)
+- [x] Guard: `_queue_packing_board` refuses a fully delivered order (`FULLY_DELIVERED_MSG`), and `register-deposit` / `use-existing-invoice` refuse up front; the reconciliation wizard's retroactive packing step is exempt (`allow_delivered`)
+- [x] Expected Payments shows such orders as **Already delivered in Odoo** with no Record/Link action
+- [x] **Close Fulfilled Orders** (Orders Tickets toolbar, super admin only, `GET/POST /api/packing/reconcile-fulfilled`): preview of every open order ticket and early-stage Sales ticket whose order is fully delivered in Odoo, split paid / still owing (owing unticked by default); confirm clears the board entries and closes the Sales tickets as Complete with an Activity Log note and a `packing.close_fulfilled` audit entry. No Odoo writes, no emails, no sign-offs
+- [x] Override Stage to **Cleared** now needs a reason and closes the Sales ticket as Complete (quietly) unless another delivery on the order is still active, so no orphaned open Sales ticket is left
+- [ ] Live: super admin runs Close Fulfilled Orders on the linked old orders
+
+### Definition of Done
+- [x] No portal path records a new payment while an unallocated one exists without an explicit confirmation
+- [x] A cancelled deposit invoice is visible on the ticket and can't silently produce a full-price final invoice
+- [x] Every final invoice is in the audit trail with its deposit deduction
+- [ ] Verified on the live system, and the historical double-recorded payments cleaned up
 
 ---
 

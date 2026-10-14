@@ -148,9 +148,20 @@ export default function OrdersTickets() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [pdfView, setPdfView]             = useState(null); // {url, title} | null — Odoo-native PDF viewer
   const [busyId, setBusyId]               = useState(null);
+  // 8.72 — Mark Complete stopped because the deposit invoice was cancelled
+  // in Odoo ({message, can_override}); Finance/admin may continue with a reason.
+  const [depositBlock, setDepositBlock]   = useState(null);
+  const [depositOverrideReason, setDepositOverrideReason] = useState("");
   const [incompleteModal, setIncompleteModal]   = useState(false);
   const [incompleteReason, setIncompleteReason] = useState("");
   const [overrideStatus, setOverrideStatus]     = useState("");
+  const [overrideReason, setOverrideReason]     = useState("");  // required for Cleared (2026-10-14)
+  // Close Fulfilled Orders (2026-10-14, super admin): old orders already
+  // delivered in Odoo that ended up open in the portal. Preview first.
+  const [fulfilledPreview, setFulfilledPreview] = useState(null);  // {paid, owing}
+  const [fulfilledPick, setFulfilledPick]       = useState(new Set());
+  const [fulfilledLoading, setFulfilledLoading] = useState(false);
+  const [fulfilledSaving, setFulfilledSaving]   = useState(false);
   const [tickingSkus,  setTickingSkus ] = useState(new Set());
   const [packerInput,  setPackerInput ] = useState("");
   const [savingPacker, setSavingPacker] = useState(false);
@@ -273,10 +284,14 @@ export default function OrdersTickets() {
     finally { setBusyId(null); }
   };
 
-  const handleComplete = async () => {
+  const handleComplete = async (overrideReason) => {
     setBusyId(detail.order_id);
     try {
-      const r = await api.put("/api/packing/complete", { order_id: detail.order_id, picking_id: detail.odoo_picking_id });
+      const r = await api.put("/api/packing/complete", {
+        order_id: detail.order_id, picking_id: detail.odoo_picking_id,
+        ...(typeof overrideReason === "string" && overrideReason.trim() ? { deposit_override_reason: overrideReason.trim() } : {}),
+      });
+      setDepositBlock(null);
       if (r.data.is_partial) {
         toast.success("Partial delivery validated — backorder entry created");
       } else if (r.data.warning) {
@@ -287,7 +302,15 @@ export default function OrdersTickets() {
       }
       load();
       await refreshDetail(detail.order_id);
-    } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      if (e.response?.status === 409 && d?.code === "deposit_cancelled") {
+        setDepositOverrideReason("");
+        setDepositBlock(d);
+      } else {
+        toast.error((typeof d === "string" ? d : d?.message) || "Action failed");
+      }
+    }
     finally { setBusyId(null); }
   };
 
@@ -421,13 +444,57 @@ export default function OrdersTickets() {
   };
 
   const submitOverride = async () => {
+    if (overrideStatus === "cleared" && !overrideReason.trim())
+      return toast.error("Give a reason for clearing this order ticket");
     setBusyId(detail.order_id);
     try {
-      await api.put("/api/packing/override-status", { order_id: detail.order_id, status: overrideStatus, picking_id: detail.odoo_picking_id });
-      toast.success("Stage overridden");
+      const { data } = await api.put("/api/packing/override-status", {
+        order_id: detail.order_id, status: overrideStatus, picking_id: detail.odoo_picking_id,
+        ...(overrideStatus === "cleared" ? { reason: overrideReason.trim() } : {}),
+      });
+      if (overrideStatus === "cleared") {
+        toast.success(data.sales_ticket_closed
+          ? "Order ticket cleared and its Sales ticket closed"
+          : "Order ticket cleared. The Sales ticket stays open: another delivery on this order is still active.");
+        setOverrideReason("");
+      } else {
+        toast.success("Stage overridden");
+      }
       await refreshDetail(detail.order_id);
     } catch (e) { toast.error(e.response?.data?.detail || "Override failed"); }
     finally { setBusyId(null); }
+  };
+
+  const openFulfilledPreview = async () => {
+    setFulfilledLoading(true);
+    try {
+      const { data } = await api.get("/api/packing/reconcile-fulfilled/preview");
+      if (!data.paid.length && !data.owing.length) {
+        toast("Nothing to close. No open ticket is for an order Odoo shows as already delivered.", { icon: "ℹ️" });
+      } else {
+        setFulfilledPick(new Set(data.paid.map(r => r.order_id)));
+        setFulfilledPreview(data);
+      }
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not load the list"); }
+    finally { setFulfilledLoading(false); }
+  };
+
+  const toggleFulfilled = (id) => setFulfilledPick(prev => {
+    const n = new Set(prev);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+
+  const confirmCloseFulfilled = async () => {
+    setFulfilledSaving(true);
+    try {
+      const { data } = await api.post("/api/packing/reconcile-fulfilled", { order_ids: [...fulfilledPick] });
+      toast.success(`${data.closed.length} order${data.closed.length !== 1 ? "s" : ""} closed`
+        + (data.skipped.length ? `; ${data.skipped.length} skipped (no longer fully delivered in Odoo)` : ""));
+      setFulfilledPreview(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not close the orders"); }
+    finally { setFulfilledSaving(false); }
   };
 
   // ── Item tick ───────────────────────────────────────────────────────────────
@@ -1328,6 +1395,16 @@ export default function OrdersTickets() {
                               ))}
                             </Select>
                           </FormGroup>
+                          {overrideStatus === "cleared" && (
+                            <FormGroup label="Reason" required>
+                              <Textarea rows={2} value={overrideReason} onChange={e => setOverrideReason(e.target.value)}
+                                placeholder="e.g. delivered and paid in Odoo before the portal tracked it" />
+                              <p className="text-[11px] text-gray-500 mt-1">
+                                Clearing takes this off the packing board and closes its Sales ticket as Complete with this reason.
+                                Nothing is changed in Odoo and no one is emailed.
+                              </p>
+                            </FormGroup>
+                          )}
                           <BtnPrimary
                             onClick={submitOverride}
                             loading={busyId === detail.order_id}
@@ -1404,6 +1481,86 @@ export default function OrdersTickets() {
             </div>
           </Modal>
         )}
+        {depositBlock && (
+          <Modal title="Can't mark complete yet" onClose={() => setDepositBlock(null)}>
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800">
+              <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+              <p>{depositBlock.message}</p>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              Nothing has been changed. The delivery hasn't been validated and no invoice was raised.
+            </p>
+            {depositBlock.can_override ? (
+              <div className="mt-3">
+                <FormGroup label="Continue anyway (Finance or admin only): reason">
+                  <Textarea rows={2} value={depositOverrideReason} onChange={e => setDepositOverrideReason(e.target.value)}
+                    placeholder="e.g. the deposit was refunded to the customer" />
+                </FormGroup>
+                <p className="text-xs text-amber-700">
+                  Continuing raises the final invoice for the full order amount, with no deposit deducted, and emails it to the customer.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-600 mt-2">Let Finance know; once they've restored the deposit, mark this order complete again.</p>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setDepositBlock(null)}>Close</BtnSecondary>
+              {depositBlock.can_override && (
+                <BtnDanger onClick={() => handleComplete(depositOverrideReason)}
+                  disabled={!depositOverrideReason.trim() || busyId === detail?.order_id}>
+                  Continue Anyway
+                </BtnDanger>
+              )}
+            </div>
+          </Modal>
+        )}
+
+        {fulfilledPreview && (
+          <Modal title="Close Fulfilled Orders" onClose={() => !fulfilledSaving && setFulfilledPreview(null)} width="max-w-3xl">
+            <p className="text-sm text-gray-600">
+              These open tickets are for orders Odoo shows as already delivered. Closing takes them off the packing board and
+              closes the Sales ticket as Complete with a note. Nothing is changed in Odoo, no packing or QA/RP sign-off is
+              recorded, and no one is emailed.
+            </p>
+            {[
+              ["paid", "Delivered and paid", "Ticked by default."],
+              ["owing", "Delivered, money still owing", "Not ticked by default: the customer still owes on these invoices. Closing the ticket doesn't change that; follow it up on the Invoices page."],
+            ].map(([key, title, hint]) => fulfilledPreview[key].length > 0 && (
+              <div key={key} className="mt-4">
+                <p className="text-sm font-semibold text-gray-800">{title} ({fulfilledPreview[key].length})</p>
+                <p className="text-xs text-gray-500 mb-2">{hint}</p>
+                <div className="border border-gray-100 rounded-xl divide-y divide-gray-50 max-h-72 overflow-y-auto">
+                  {fulfilledPreview[key].map(r => (
+                    <label key={r.order_id} className="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50">
+                      <input type="checkbox" className="mt-1" checked={fulfilledPick.has(r.order_id)} onChange={() => toggleFulfilled(r.order_id)} />
+                      <div className="min-w-0 text-xs">
+                        <p className="text-sm font-medium text-gray-900">
+                          {r.order_name} · {r.customer_name}
+                          {r.owing > 0 && <span className="ml-2 text-amber-700">{fmtR(r.owing)} owing</span>}
+                        </p>
+                        <p className="text-gray-500">
+                          Delivered: {(r.deliveries || []).join(", ") || "n/a"}
+                          {r.invoices?.length ? ` · Invoices: ${r.invoices.join(", ")}` : ""}
+                        </p>
+                        <p className="text-gray-400">
+                          {r.ticket_ref ? `${r.ticket_ref} (${r.ticket_status})` : "No open Sales ticket"}
+                          {r.board?.length ? ` · On packing board: ${r.board.map(b => `${b.ps_num || "entry"} ${b.status}${b.signed_off ? ", signed off" : ""}`).join("; ")}` : ""}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2 mt-4">
+              <BtnSecondary onClick={() => setFulfilledPreview(null)} disabled={fulfilledSaving}>Cancel</BtnSecondary>
+              <BtnDanger onClick={confirmCloseFulfilled} disabled={fulfilledSaving || fulfilledPick.size === 0}>
+                Close {fulfilledPick.size} Order{fulfilledPick.size !== 1 ? "s" : ""}
+              </BtnDanger>
+            </div>
+          </Modal>
+        )}
+
         {reconcilePreview && (
           <Modal title="Reconcile Cancelled Tickets" onClose={() => setReconcilePreview(null)}>
             <p className="text-sm text-gray-700 font-medium mb-2">
@@ -1545,6 +1702,15 @@ export default function OrdersTickets() {
                   <BtnPrimary onClick={handleCheckStock}><RefreshCw size={13} />Check Now</BtnPrimary>
                 </div>
               </Modal>
+            )}
+            {user?.is_super_admin && (
+              <BtnSecondary
+                onClick={openFulfilledPreview}
+                loading={fulfilledLoading}
+                title="Find open tickets for orders Odoo shows as already delivered, and close them"
+              >
+                <CheckCircle2 size={13} />Close Fulfilled Orders
+              </BtnSecondary>
             )}
             {canManage && (
               <BtnSecondary

@@ -26,7 +26,7 @@ from auth import (
     get_current_user, get_user_by_username, require_super_admin, ADMIN_ROLES, TICKET_ROLES,
 )
 from routes.monitor_routes import broadcast_monitor_refresh
-from routes.order_routes import _queue_packing_board, _send_order_confirmation_email
+from routes.order_routes import _queue_packing_board, _send_order_confirmation_email, order_fulfilment_state, FULLY_DELIVERED_MSG
 from routes.packing_board_routes import (
     push_update as _push_packing_board_update, release_collection_holds,
     payment_required_before_collection,
@@ -52,6 +52,10 @@ from account_terms import (
 from portal_sales_agent import sync_portal_sales_agent
 from discount_requests import cancel_pending_request
 from services.age_tier import ticket_age_fields
+from deposit_integrity import (
+    customer_unallocated, invoice_outstanding, apply_credit, order_deposit_state,
+    restore_deposit_invoice, unallocated_detail,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +243,15 @@ class TicketDepositRegister(BaseModel):
     amount: Optional[float] = None   # required for 'fixed'
     percentage: Optional[float] = None  # required for 'percentage', 0 < x <= 100
     date: str           # YYYY-MM-DD
-    journal_id: int
+    journal_id: Optional[int] = None   # required unless use_credit_line_id is given
     note: Optional[str] = ""
+    # 8.72 — apply a payment already on the customer's account (an
+    # unallocated account.move.line) to the deposit invoice instead of
+    # recording a new payment.
+    use_credit_line_id: Optional[int] = None
+    # 8.72 — must be True to record a NEW payment when the customer already
+    # has unallocated payments that could be applied instead.
+    confirm_new_payment: bool = False
     # 8.71 — required when the deposit is under TOKEN_DEPOSIT_PCT of the order
     # total. Token deposits (e.g. R1) were being used to get past the gate,
     # leaving a junk invoice and payment in the books; Request Release on
@@ -260,6 +271,9 @@ class TicketBalancePayment(BaseModel):
     date: str           # YYYY-MM-DD
     journal_id: int
     note: Optional[str] = ""
+    # 8.72 — must be True to record a NEW payment when the customer already
+    # has unallocated payments or credits that could be applied instead.
+    confirm_new_payment: bool = False
     # 8.69d — False when Finance chooses not to email the customer (and their
     # reseller), e.g. recording a payment on an old order already collected.
     # Defaults True so every other caller behaves exactly as before.
@@ -1028,6 +1042,11 @@ async def _expected_deposit_rows(odoo, exclude_order_ids: set) -> list:
     )}
     invoices = {i["id"]: i for i in _order_invoices(
         odoo, list({i for o in orders.values() for i in (o.get("invoice_ids") or [])}))}
+    try:
+        fulfilment = order_fulfilment_state(odoo, order_ids)
+    except Exception as e:
+        logger.warning("expected_payments_fulfilment_failed error=%s", e)
+        fulfilment = {}
 
     rows = []
     for t in tickets:
@@ -1044,7 +1063,15 @@ async def _expected_deposit_rows(odoo, exclude_order_ids: set) -> list:
         rr = t.get("release_request") or {}
         link_invoice = None
 
-        if t.get("payment_confirmed_at") or t.get("released_on_account_at"):
+        if fulfilment.get(t["order_id"], {}).get("delivered"):
+            # Delivered entirely in Odoo before the portal tracked it: not a
+            # deposit to collect, and never to be queued for packing.
+            stage = "deposit_delivered"
+            stage_label = "Already delivered in Odoo"
+            pay_mode = None
+            due = 0.0
+            rr = {"reason": "A super admin can close this ticket from Orders Tickets > Close Fulfilled Orders."}
+        elif t.get("payment_confirmed_at") or t.get("released_on_account_at"):
             # Gate already cleared but the packing board was never created
             # (packing_board_queue_error). Nothing to collect; it needs the
             # Admin Override retry on the Sales ticket.
@@ -1288,7 +1315,7 @@ async def list_expected_payments(
 
     order_rank = {"packed_waiting": 0, "packed_notified": 1, "signoff": 2, "packing": 3, "in_progress": 4,
                   "approved": 5, "deposit_unlinked": 6, "deposit_stuck": 7, "deposit_due": 8,
-                  "deposit_held": 9, "deposit_requested": 10, "paid": 11}
+                  "deposit_held": 9, "deposit_requested": 10, "deposit_delivered": 11, "paid": 12}
     rows.sort(key=lambda r: (order_rank.get(r["stage"], 99), -(r["days_waiting"] or 0), r["customer_name"] or ""))
     return {"rows": rows, "counts": counts, "total_due": total_due, "deposits_due": deposits_due}
 
@@ -1454,6 +1481,18 @@ async def get_ticket(
     # own docstring. Detail-view only, not list_tickets, to avoid an extra
     # packing_board query per row on the list.
     ticket["override_gaps"] = await _compute_override_gaps(ticket)
+
+    # 8.72 — a deposit invoice cancelled in Odoo (its payment unallocated,
+    # the final invoice left with nothing to deduct). Only checked once a
+    # deposit or advance payment has been recorded on the ticket.
+    ticket["deposit_issue"] = None
+    if ticket.get("order_id") and (ticket.get("payment_confirmed_at") or ticket.get("deposit_invoice_ids")):
+        try:
+            _ds = order_deposit_state(get_odoo_client(), ticket["order_id"])
+            if _ds.get("problem"):
+                ticket["deposit_issue"] = _ds
+        except Exception as e:
+            logger.warning("get_ticket_deposit_state_failed ticket_id=%s error=%s", ticket_id, e)
 
     return _serialize(ticket)
 
@@ -2290,6 +2329,169 @@ async def send_quote(
     return await _send_quote_impl(ticket_id, oid, ticket, current_user, background_tasks, recipients=body.recipients)
 
 
+# ── 8.72 — Apply, never duplicate; restore a cancelled deposit ───────────────
+# Odoo is the source of truth. When the customer already has a payment on
+# their account that isn't allocated to anything, the portal applies it
+# rather than recording the same money again; and a deposit invoice
+# cancelled in Odoo is restored (same number, same payment) rather than
+# replaced. See deposit_integrity.py.
+
+class ApplyPaymentBody(BaseModel):
+    line_id: int
+    notify_customer: bool = True   # 8.69d — emails if this releases a held order
+
+
+async def _load_finance_ticket(ticket_id: str) -> tuple:
+    try:
+        oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await col("tickets").find_one({"_id": oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("order_id"):
+        raise HTTPException(status_code=400, detail="No linked order")
+    return oid, ticket
+
+
+@router.get("/{ticket_id}/unallocated-payments")
+async def list_unallocated_payments(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Payments and credits on this order's customer account that aren't
+    allocated to anything (in the order's own company), plus the order's
+    deposit state. Shown in every payment window before anything new is
+    recorded."""
+    _oid, ticket = await _load_finance_ticket(ticket_id)
+    odoo = get_odoo_client()
+    try:
+        so = odoo.read("sale.order", [ticket["order_id"]], fields=["partner_id", "company_id"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    if not so:
+        raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    credits = customer_unallocated(odoo, (so[0].get("partner_id") or [None])[0], (so[0].get("company_id") or [None])[0])
+    return {"credits": credits, "deposit_state": order_deposit_state(odoo, ticket["order_id"])}
+
+
+@router.post("/{ticket_id}/apply-payment")
+async def apply_existing_payment(
+    ticket_id: str,
+    body: ApplyPaymentBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Apply a payment already on the customer's account to this order's
+    open invoice (the delivery's own unpaid final invoice, same resolver as
+    Register Payment). No new payment is created in Odoo."""
+    oid, ticket = await _load_finance_ticket(ticket_id)
+    odoo = get_odoo_client()
+    try:
+        so = odoo.read("sale.order", [ticket["order_id"]], fields=["invoice_ids", "name"])
+        inv = await _resolve_balance_invoice(odoo, ticket["order_id"], so[0].get("invoice_ids", []) if so else [])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    if not inv:
+        raise HTTPException(status_code=400, detail=(
+            "This order has no open invoice to apply a payment to. Before it is invoiced, use Record Deposit "
+            "or Record Payment and choose the existing payment there."))
+    _inv, items = invoice_outstanding(odoo, inv["id"])
+    match = next((i for i in items if i["line_id"] == body.line_id), None)
+    if not match:
+        raise HTTPException(status_code=400, detail="That payment is no longer available to apply to this invoice. Refresh and try again.")
+    try:
+        res = apply_credit(odoo, inv["id"], body.line_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not apply the payment: {e}")
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one({"_id": oid}, {
+        "$set": {"updated_at": now, "pop_awaiting_review": False},
+        "$push": {"stage_history": {
+            "status": ticket["status"], "exit_status": None,
+            "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now,
+            "note": f"Existing payment {match['reference']} (R{float(match['amount']):,.2f}) applied to {inv['name']}"
+                    + ("" if body.notify_customer else ". Customer not emailed"),
+        }},
+    })
+    await audit_log(
+        "ticket.apply_existing_payment", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""), user=current_user,
+        before={"amount_residual": res["before"]},
+        after={"amount_residual": res["after"], "payment_state": res["payment_state"]},
+        detail={"invoice_id": inv["id"], "invoice_name": inv["name"], "line_id": body.line_id,
+                "reference": match["reference"], "notify_customer": body.notify_customer},
+    )
+    released = await release_collection_holds(order_id=ticket["order_id"], background_tasks=background_tasks,
+                                              actor=current_user, notify=body.notify_customer)
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    return {"success": True, "invoice_name": inv["name"], "amount_residual": res["after"],
+            "payment_state": res["payment_state"], "released": bool(released),
+            "customer_notified": bool(released) and body.notify_customer}
+
+
+@router.post("/{ticket_id}/restore-deposit")
+async def restore_cancelled_deposit(
+    ticket_id: str,
+    current_user: dict = Depends(require_any_permission("tickets.finance_confirm")),
+):
+    """Restore a deposit invoice that was cancelled in Odoo: reset it to
+    draft and post it again (it keeps its number), then re-apply the payment
+    that was unhooked when it was cancelled. Only before the final invoice
+    exists; afterwards it would invoice the deposit twice, so Finance sorts
+    it out in Odoo instead (the message says so)."""
+    oid, ticket = await _load_finance_ticket(ticket_id)
+    odoo = get_odoo_client()
+    state = order_deposit_state(odoo, ticket["order_id"])
+    if state.get("error"):
+        raise HTTPException(status_code=502, detail=f"Odoo error: {state['error']}")
+    if not state.get("problem"):
+        raise HTTPException(status_code=400, detail="This order's deposit invoice isn't cancelled. Nothing to restore.")
+    if not state.get("restorable"):
+        raise HTTPException(status_code=400, detail=state.get("message") or "The final invoice already exists; sort this out in Odoo.")
+
+    restored, applied, problems = [], [], []
+    for inv in state["cancelled"]:
+        try:
+            restore_deposit_invoice(odoo, inv["id"])
+            restored.append(inv["name"])
+        except Exception as e:
+            problems.append(f"{inv['name']}: could not restore ({e})")
+            continue
+        _inv, items = invoice_outstanding(odoo, inv["id"])
+        for cred in [c for c in state["stranded"] if inv["name"] in (c.get("memo") or "")]:
+            if not any(i["line_id"] == cred["line_id"] for i in items):
+                continue
+            try:
+                apply_credit(odoo, inv["id"], cred["line_id"])
+                applied.append(cred["reference"])
+            except Exception as e:
+                problems.append(f"{cred['reference']}: could not apply to {inv['name']} ({e})")
+
+    after = order_deposit_state(odoo, ticket["order_id"])
+    now = datetime.now(timezone.utc)
+    note = (f"Deposit invoice restored: {', '.join(restored) or 'none'}"
+            + (f"; payment re-applied: {', '.join(applied)}" if applied else "; no payment re-applied")
+            + (f". Problems: {'; '.join(problems)}" if problems else ""))
+    await col("tickets").update_one({"_id": oid}, {
+        "$set": {"updated_at": now},
+        "$push": {"stage_history": {
+            "status": ticket["status"], "exit_status": None,
+            "actor_id": current_user["id"], "actor_name": _actor(current_user), "at": now, "note": note,
+        }},
+    })
+    await audit_log(
+        "ticket.restore_deposit", "ticket", ticket_id,
+        entity_label=ticket.get("customer_name", ""), user=current_user,
+        before={"cancelled": [c["name"] for c in state["cancelled"]]},
+        after={"posted": [p["name"] for p in after.get("posted", [])], "problem": after.get("problem")},
+        detail={"restored": restored, "applied": applied, "problems": problems},
+    )
+    await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
+    return {"success": not problems, "restored": restored, "applied": applied, "problems": problems,
+            "deposit_state": after}
+
+
 @router.get("/{ticket_id}/existing-invoices")
 async def list_existing_invoices(
     ticket_id: str,
@@ -2401,6 +2603,9 @@ async def use_existing_invoice(
         raise HTTPException(status_code=502, detail=f"Odoo error: {str(e)}")
     if not order_rows:
         raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
+    # 2026-10-14 — never queue an order Odoo shows as already delivered.
+    if order_fulfilment_state(odoo, [order_id]).get(int(order_id), {}).get("delivered"):
+        raise HTTPException(status_code=400, detail=FULLY_DELIVERED_MSG)
     inv_ids = order_rows[0].get("invoice_ids", [])
     if body.invoice_id not in inv_ids:
         raise HTTPException(status_code=400, detail="That invoice does not belong to this ticket's linked order")
@@ -2694,6 +2899,8 @@ async def register_deposit(
     if invoice_type == "fixed":
         if not body.amount or body.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be positive for a fixed invoice")
+    if not body.use_credit_line_id and not body.journal_id:
+        raise HTTPException(status_code=400, detail="Choose a payment method")
     if invoice_type == "percentage":
         if not body.percentage or not (0 < body.percentage <= 100):
             raise HTTPException(status_code=400, detail="Percentage must be between 0 and 100")
@@ -2702,7 +2909,7 @@ async def register_deposit(
     odoo = get_odoo_client()
 
     # Resolve the order's company and validate it is confirmed before running the wizard
-    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name", "amount_total"])
+    _order_co = odoo.read("sale.order", [order_id], fields=["company_id", "state", "name", "amount_total", "partner_id"])
     if not _order_co:
         raise HTTPException(status_code=404, detail="Linked order not found in Odoo")
     _order_row = _order_co[0]
@@ -2714,6 +2921,11 @@ async def register_deposit(
     _co = _order_row.get("company_id")
     order_company_id = _co[0] if _co else None
     _cctx = company_context(order_company_id)
+
+    # 2026-10-14 — a deposit would queue the order for packing; never for an
+    # order Odoo shows as already delivered (nothing to pack).
+    if not is_advance and order_fulfilment_state(odoo, [order_id]).get(int(order_id), {}).get("delivered"):
+        raise HTTPException(status_code=400, detail=FULLY_DELIVERED_MSG)
 
     # 8.71 — token deposit guard. Doesn't apply to a payment towards a
     # pay-before-collection order: any amount the customer actually paid is
@@ -2729,6 +2941,26 @@ async def register_deposit(
                 status_code=400,
                 detail=f"That is more than is owing on this order (R{_owing:,.2f}).",
             )
+    # 8.72 — apply, never duplicate. Before creating anything in Odoo: if the
+    # customer already has unallocated payments or credits, either one of
+    # them is applied to the deposit invoice (use_credit_line_id) or the
+    # caller confirms this is a separate payment that genuinely arrived.
+    _partner_id = (_order_row.get("partner_id") or [None])[0]
+    _credits = customer_unallocated(odoo, _partner_id, order_company_id)
+    _use_credit = None
+    if body.use_credit_line_id:
+        _use_credit = next((c for c in _credits if c["line_id"] == body.use_credit_line_id), None)
+        if not _use_credit:
+            raise HTTPException(status_code=400, detail="That payment is no longer unallocated on the customer's account. Refresh and try again.")
+        if _deposit_amount > _use_credit["amount"] + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The deposit (R{_deposit_amount:,.2f}) is more than that payment (R{_use_credit['amount']:,.2f}). "
+                       "Enter the payment's amount, or record the difference separately.",
+            )
+    elif _credits and not body.confirm_new_payment:
+        raise HTTPException(status_code=409, detail=unallocated_detail(_credits, "deposit"))
+
     if is_small_deposit and not small_deposit_reason:
         raise HTTPException(
             status_code=400,
@@ -2835,40 +3067,51 @@ async def register_deposit(
     else:
         pay_amount = body.amount
 
-    # Step 2: Register and reconcile payment via Odoo wizard
-    try:
-        pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
-        pay_wizard_id = odoo_call(
-            "account.payment.register", "create",
-            [{
-                "amount": pay_amount,
-                "journal_id": body.journal_id,
-                "payment_date": body.date,
-            }],
-            {"context": pay_ctx},
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
-
-    try:
-        odoo_call(
-            "account.payment.register", "action_create_payments",
-            [[pay_wizard_id]],
-            {"context": pay_ctx},
-        )
-    except Exception as e:
-        # Same Odoo XML-RPC serialisation quirk on the action response.
-        # Verify the payment actually landed before treating this as a failure.
+    # Step 2: Register and reconcile payment via Odoo wizard — or, 8.72,
+    # apply the payment already on the customer's account instead.
+    if _use_credit:
         try:
-            updated = odoo.read("account.move", [invoice_id], fields=["payment_state"])
-            if not updated or updated[0].get("payment_state") not in ("in_payment", "paid"):
-                raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
-        except HTTPException:
-            raise
-        except Exception:
+            apply_credit(odoo, invoice_id, _use_credit["line_id"])
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Deposit invoice created, but the existing payment could not be applied: {e}. "
+                       "Apply it from the invoice in the portal.",
+            )
+    else:
+        try:
+            pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
+            pay_wizard_id = odoo_call(
+                "account.payment.register", "create",
+                [{
+                    "amount": pay_amount,
+                    "journal_id": body.journal_id,
+                    "payment_date": body.date,
+                }],
+                {"context": pay_ctx},
+            )
+        except Exception as e:
             raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
-        logger.warning("deposit_payment_response_error",
-                       extra={"invoice_id": invoice_id, "error": str(e)})
+
+        try:
+            odoo_call(
+                "account.payment.register", "action_create_payments",
+                [[pay_wizard_id]],
+                {"context": pay_ctx},
+            )
+        except Exception as e:
+            # Same Odoo XML-RPC serialisation quirk on the action response.
+            # Verify the payment actually landed before treating this as a failure.
+            try:
+                updated = odoo.read("account.move", [invoice_id], fields=["payment_state"])
+                if not updated or updated[0].get("payment_state") not in ("in_payment", "paid"):
+                    raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=502, detail=f"Payment registration failed: {str(e)}")
+            logger.warning("deposit_payment_response_error",
+                           extra={"invoice_id": invoice_id, "error": str(e)})
 
     # Stamp ticket
     now = datetime.now(timezone.utc)
@@ -2885,7 +3128,8 @@ async def register_deposit(
                     "status": ticket["status"], "exit_status": None,
                     "actor_id": current_user["id"], "actor_name": _actor(current_user),
                     "at": now,
-                    "note": body.note or f"Payment received before invoicing: R{pay_amount:,.2f}",
+                    "note": body.note or (f"Payment received before invoicing: R{pay_amount:,.2f}"
+                                          + (f" (applied existing payment {_use_credit['reference']})" if _use_credit else "")),
                 }},
             },
         )
@@ -2893,7 +3137,8 @@ async def register_deposit(
             "ticket.register_advance_payment", "ticket", ticket_id,
             entity_label=ticket.get("customer_name", ""), user=current_user,
             detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id,
-                    "invoice_id": invoice_id, "date": body.date},
+                    "invoice_id": invoice_id, "date": body.date,
+                    "applied_existing_payment": (_use_credit or {}).get("reference")},
         )
         await broadcast_monitor_refresh()
         await ticket_manager.broadcast(ticket_id, _ticket_customer_partner_id(ticket))
@@ -2914,7 +3159,8 @@ async def register_deposit(
                 "status": ticket["status"], "exit_status": None,
                 "actor_id": current_user["id"], "actor_name": _actor(current_user),
                 "at": now,
-                "note": (body.note or f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}")
+                "note": (body.note or (f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} by applying existing payment {_use_credit['reference']}"
+                                       if _use_credit else f"Deposit registered ({invoice_type}) — R{pay_amount:,.2f} via journal {body.journal_id}"))
                         + (f" (small deposit: {small_deposit_reason})" if is_small_deposit else "")
                         + ("" if body.notify_customer else ". Customer not emailed"),
             }},
@@ -2927,7 +3173,9 @@ async def register_deposit(
         user=current_user,
         detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id, "invoice_id": invoice_id, "date": body.date,
                 "small_deposit": is_small_deposit, "small_deposit_reason": small_deposit_reason,
-                "notify_customer": body.notify_customer},
+                "notify_customer": body.notify_customer,
+                "applied_existing_payment": (_use_credit or {}).get("reference"),
+                "confirmed_new_despite_unallocated": body.confirm_new_payment and bool(_credits)},
     )
 
     # Gate enforcement point — nothing reaches the packing board without this.
@@ -3924,6 +4172,17 @@ async def register_balance_payment(
             detail=f"That is more than is owing on invoice {full_invoice['name']} (R{float(full_invoice['amount_residual']):,.2f}).",
         )
 
+    # 8.72 — apply, never duplicate: if Odoo already holds a payment or
+    # credit that could pay this invoice, the caller must apply it (POST
+    # /apply-payment) or confirm this is a separate payment that arrived.
+    if not body.confirm_new_payment:
+        try:
+            _inv, _credits = invoice_outstanding(odoo, invoice_id)
+        except Exception:
+            _credits = []
+        if _credits:
+            raise HTTPException(status_code=409, detail=unallocated_detail(_credits, "invoice"))
+
     # Register payment via Odoo wizard
     pay_ctx = {"active_model": "account.move", "active_ids": [invoice_id], **_cctx}
     try:
@@ -3992,7 +4251,8 @@ async def register_balance_payment(
         user=current_user,
         detail={"amount": body.amount, "journal_id": body.journal_id, "invoice_id": invoice_id,
                 "date": body.date, "payment_state": final_state, "amount_residual": final_residual,
-                "notify_customer": body.notify_customer},
+                "notify_customer": body.notify_customer,
+                "confirmed_new_despite_unallocated": body.confirm_new_payment},
     )
     # 8.69 — if this paid a held order's invoice, tell the customer it's ready.
     # notify_customer=False (8.69d) still releases the hold, just without emails.

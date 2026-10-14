@@ -18,6 +18,7 @@ import { Modal, BtnPrimary, BtnSecondary, BtnDanger, OdooPdfViewerModal, fmtR, f
 import RegisterPaymentModal from "./RegisterPaymentModal";
 import CreditNoteModal from "./CreditNoteModal";
 import SendRecipientsModal from "./SendRecipientsModal";
+import { DepositForOrderPanel } from "./UnallocatedPayments";
 
 const PAYMENT_LABEL = { not_paid: "Unpaid", partial: "Partially paid", in_payment: "In payment", paid: "Paid", reversed: "Reversed" };
 const PAYMENT_STYLE = {
@@ -229,6 +230,9 @@ export default function InvoiceDetailModal({ invoiceId, onClose, onChanged }) {
                 </div>
               </div>
             )}
+
+            {/* 8.72 — a deposit invoice: the order it's for, with its items */}
+            <DepositForOrderPanel deposit={inv.deposit_for_order} />
 
             {/* Lines */}
             {inv.lines?.length > 0 && (

@@ -47,6 +47,7 @@ from services.email_service import (
 from support_links import order_help_url
 from services.notification_service import notify_ticket_handoff
 from services.age_tier import board_entry_age_fields
+from deposit_integrity import order_deposit_state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packing", tags=["packing-board"])
@@ -986,11 +987,27 @@ class UpdateStatus(BaseModel):
     order_id:   str
     status:     str
     picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
+    reason:     Optional[str] = None  # required when overriding to "cleared" (2026-10-14)
 
 
 class OrderIdBody(BaseModel):
     order_id:   str
     picking_id: Optional[int] = None  # Odoo picking ID; if omitted, targets the primary (non-backorder) entry
+
+
+class CompleteBody(OrderIdBody):
+    # 8.72 — Mark Complete stops when the order's deposit invoice was
+    # cancelled in Odoo (the final invoice would charge the full amount).
+    # Finance or an admin can continue anyway with a reason, e.g. the deposit
+    # was genuinely refunded.
+    deposit_override_reason: Optional[str] = None
+
+
+def _can_override_deposit(user: dict) -> bool:
+    if user.get("is_super_admin") or user.get("role") == "super_admin":
+        return True
+    t = (user.get("permissions") or {}).get("tickets") or {}
+    return bool(t.get("finance_confirm") or t.get("manage"))
 
 
 class RetroactivePackingBody(BaseModel):
@@ -1421,7 +1438,9 @@ def _validate_odoo_delivery(odoo_order_id: int, qty_overrides: Optional[dict] = 
     return {"success": True, "pickings": validated, "error": None, "backorder_picking_id": backorder_picking_id, "backorder_picking_name": backorder_picking_name}
 
 
-async def _create_final_invoice(entry: dict, now: datetime, background_tasks: BackgroundTasks) -> dict:
+async def _create_final_invoice(entry: dict, now: datetime, background_tasks: BackgroundTasks,
+                                actor: Optional[dict] = None, trigger: str = "mark_complete",
+                                allow_missing_deposit: bool = False) -> dict:
     """Create + post the final delivery invoice for an order in Odoo (after
     QA + RP sign-off) and stamp its id back onto the linked Sales ticket.
     Extracted from complete_entry (2026-08-27) so the same logic can be
@@ -1430,11 +1449,29 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
     create_invoices() TypeError incident (see this file's own history) left
     orders stuck at "complete" with no invoice and no way to register the
     balance payment. Never raises — returns invoice_warning on any failure,
-    same as complete_entry's own original inline try/except did."""
+    same as complete_entry's own original inline try/except did.
+
+    8.72: refuses (returns a warning, creates nothing) when the order's
+    deposit invoice was cancelled in Odoo, unless allow_missing_deposit,
+    since the invoice would then charge the full amount. Every outcome is
+    audit-logged here (packing.final_invoice_created / _failed), whichever
+    caller triggered it (trigger: mark_complete, retry, reconciliation)."""
     invoice_id: Optional[int] = None
     invoice_name: Optional[str] = None
     invoice_warning: Optional[str] = None
     invoice_sent = False
+    reused_existing = False
+    emailed_to: Optional[str] = None
+    deposit_state: dict = {}
+    try:
+        deposit_state = order_deposit_state(get_odoo_client(), int(entry["order_id"]))
+    except Exception:
+        deposit_state = {}
+    if deposit_state.get("problem") and not allow_missing_deposit:
+        result = {"invoice_id": None, "invoice_name": None,
+                  "invoice_warning": deposit_state.get("message"), "invoice_sent": False}
+        await _log_final_invoice(entry, actor, trigger, result, deposit_state, False, None)
+        return result
     try:
         odoo = get_odoo_client()
         sale_order_id = int(entry["order_id"])
@@ -1497,6 +1534,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                 _existing = []
 
         if _existing:
+            reused_existing = True
             invoice_id = _existing[0]["id"]
             invoice_name = _existing[0]["name"]
             if _existing[0]["state"] == "draft":
@@ -1521,12 +1559,14 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
             except Exception:
                 _to_invoice = None  # can't tell; the credit-note check below still protects
             if _to_invoice is not None and _to_invoice <= 0:
-                return {
+                _r = {
                     "invoice_id": None, "invoice_name": None,
                     "invoice_warning": ("Nothing has been delivered yet, so there is nothing to invoice. "
                                         "The delivery must be validated in Odoo first."),
                     "invoice_sent": False,
                 }
+                await _log_final_invoice(entry, actor, trigger, _r, deposit_state, False, None)
+                return _r
             wiz_id = odoo.create(
                 "sale.advance.payment.inv",
                 {"advance_payment_method": "delivered", "sale_order_ids": [(4, sale_order_id)]},
@@ -1575,10 +1615,12 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                 # No new invoice actually appeared — a real failure, not the
                 # serialization quirk. invoice_id is still None here, so the
                 # ticket-stamping block below is already correctly a no-op.
-                return {
+                _r = {
                     "invoice_id": None, "invoice_name": None,
                     "invoice_warning": f"Invoice creation failed: {_raised}", "invoice_sent": False,
                 }
+                await _log_final_invoice(entry, actor, trigger, _r, deposit_state, False, None)
+                return _r
 
             if _new_ids:
                 try:
@@ -1589,12 +1631,14 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                     _stray = [r["id"] for r in _new_rows if r.get("move_type") == "out_refund" and r.get("state") == "draft"]
                     if _stray:
                         odoo.unlink("account.move", _stray)
-                        return {
+                        _r = {
                             "invoice_id": None, "invoice_name": None,
                             "invoice_warning": ("Odoo produced a credit note instead of an invoice (nothing delivered "
                                                 "beyond the deposit). It has been removed; validate the delivery and retry."),
                             "invoice_sent": False,
                         }
+                        await _log_final_invoice(entry, actor, trigger, _r, deposit_state, False, None)
+                        return _r
                     _new_out = sorted(
                         (r for r in _new_rows if r.get("move_type") == "out_invoice"),
                         key=lambda r: r["id"], reverse=True,
@@ -1646,6 +1690,7 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
                         collection_after_payment=_collection_after_payment,
                     )
                     invoice_sent = True
+                    emailed_to = _customer_email
                     # Chatter note (2026-08-28) — see the matching note in
                     # ticket_routes.py's send_invoice/_send_quote_impl for why
                     # this is needed now that the send doesn't go through
@@ -1678,15 +1723,75 @@ async def _create_final_invoice(entry: dict, now: datetime, background_tasks: Ba
         except Exception:
             pass
 
-    return {
+    result = {
         "invoice_id": invoice_id, "invoice_name": invoice_name,
         "invoice_warning": invoice_warning, "invoice_sent": invoice_sent,
     }
+    await _log_final_invoice(entry, actor, trigger, result, deposit_state, reused_existing, emailed_to,
+                             override_reason=(entry.get("_deposit_override_reason") if allow_missing_deposit else None))
+    return result
+
+
+async def _log_final_invoice(entry: dict, actor: Optional[dict], trigger: str, result: dict,
+                             deposit_state: dict, reused_existing: bool, emailed_to: Optional[str],
+                             override_reason: Optional[str] = None) -> None:
+    """8.72 — audit trail + Activity Log line for every final invoice
+    attempt: which invoice, its total and what's owing, which deposit was
+    deducted (or that none was), who it was emailed to, and who triggered
+    it. Never raises."""
+    try:
+        order_id = str(entry.get("order_id"))
+        invoice_id = result.get("invoice_id")
+        detail: dict = {"trigger": trigger, "picking_id": entry.get("odoo_picking_id"),
+                        "deposit_invoices": [d["name"] for d in deposit_state.get("posted", [])],
+                        "cancelled_deposit_invoices": [d["name"] for d in deposit_state.get("cancelled", [])]}
+        if override_reason:
+            detail["deposit_override_reason"] = override_reason
+        if invoice_id:
+            odoo = get_odoo_client()
+            inv = odoo.read("account.move", [int(invoice_id)], fields=["name", "amount_total", "amount_residual", "payment_state"])
+            inv = inv[0] if inv else {}
+            neg = odoo.search_read("account.move.line",
+                                   [("move_id", "=", int(invoice_id)), ("display_type", "=", "product"), ("price_total", "<", 0)],
+                                   fields=["price_total"], limit=50)
+            deducted = round(-sum(float(l.get("price_total") or 0) for l in neg), 2)
+            detail.update({
+                "invoice_id": invoice_id, "invoice_name": inv.get("name") or result.get("invoice_name"),
+                "amount_total": inv.get("amount_total"), "amount_owing": inv.get("amount_residual"),
+                "payment_state": inv.get("payment_state"), "deposit_deducted": deducted,
+                "reused_existing_invoice": reused_existing, "emailed_to": emailed_to,
+                "warning": result.get("invoice_warning"),
+            })
+            await audit_log("packing.final_invoice_created", "packing_board", order_id,
+                            entity_label=entry.get("customer_name", ""), user=actor, detail=detail)
+            note = (f"Final invoice {detail['invoice_name']} raised: R{float(inv.get('amount_total') or 0):,.2f}, "
+                    + (f"deposit deducted R{deducted:,.2f}" if deducted else "no deposit deducted")
+                    + (f", emailed to {emailed_to}" if emailed_to else ", not emailed")
+                    + (f". Deposit override: {override_reason}" if override_reason else ""))
+        else:
+            detail["reason"] = result.get("invoice_warning")
+            await audit_log("packing.final_invoice_failed", "packing_board", order_id,
+                            entity_label=entry.get("customer_name", ""), user=actor, detail=detail)
+            note = f"Final invoice not raised: {result.get('invoice_warning') or 'unknown reason'}"
+        _t = await col("tickets").find_one({"type": "sales", "order_id": int(order_id), "exit_status": None}, {"status": 1})
+        if not _t:
+            return
+        await col("tickets").update_one(
+            {"_id": _t["_id"]},
+            {"$push": {"stage_history": {
+                "status": _t.get("status"), "exit_status": None,
+                "actor_id": (actor or {}).get("id"),
+                "actor_name": (actor or {}).get("name") or (actor or {}).get("username") or "System",
+                "at": datetime.now(timezone.utc), "note": note,
+            }}},
+        )
+    except Exception as e:
+        logger.warning("final_invoice_audit_failed order_id=%s error=%s", entry.get("order_id"), e)
 
 
 @router.put("/complete")
 async def complete_entry(
-    body: OrderIdBody,
+    body: CompleteBody,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission("tickets.orders")),
 ):
@@ -1700,6 +1805,28 @@ async def complete_entry(
         raise HTTPException(status_code=400, detail="Order must be ready before it can be marked complete")
     if not entry.get("qa_approved_at") or not entry.get("rp_approved_at"):
         raise HTTPException(status_code=400, detail="Both QA and RP approval are required before marking complete")
+
+    # 8.72 — stop before validating the delivery if the deposit invoice was
+    # cancelled in Odoo: the final invoice would charge the full amount and
+    # be emailed to the customer. Finance restores the deposit on the Sales
+    # ticket first; Finance or an admin can continue anyway with a reason.
+    _allow_missing_deposit = False
+    _ds = order_deposit_state(get_odoo_client(), int(entry["order_id"])) if str(entry.get("order_id", "")).isdigit() else {}
+    if _ds.get("problem"):
+        _reason = (body.deposit_override_reason or "").strip()
+        if not _reason:
+            raise HTTPException(status_code=409, detail={
+                "code": "deposit_cancelled",
+                "message": _ds.get("message"),
+                "can_override": _can_override_deposit(current_user),
+            })
+        if not _can_override_deposit(current_user):
+            raise HTTPException(status_code=403, detail="Only Finance or an admin can continue without the deposit.")
+        _allow_missing_deposit = True
+        entry["_deposit_override_reason"] = _reason
+        await audit_log("packing.complete_deposit_override", "packing_board", body.order_id,
+                        entity_label=entry.get("customer_name", ""), user=current_user,
+                        detail={"reason": _reason, "cancelled_deposit_invoices": [c["name"] for c in _ds.get("cancelled", [])]})
 
     now = datetime.now(timezone.utc)
 
@@ -1821,7 +1948,9 @@ async def complete_entry(
     # trip to reproduce that confusing fault in place of the real, actionable
     # reason — the delivery issue itself, which is what gets persisted instead.
     if delivery_result["success"]:
-        _inv_result = await _create_final_invoice(entry, now, background_tasks)
+        _inv_result = await _create_final_invoice(entry, now, background_tasks, actor=current_user,
+                                                  trigger="mark_complete",
+                                                  allow_missing_deposit=_allow_missing_deposit)
         invoice_id      = _inv_result["invoice_id"]
         invoice_name    = _inv_result["invoice_name"]
         invoice_warning = _inv_result["invoice_warning"]
@@ -2046,7 +2175,7 @@ async def retry_invoice_creation(
 
         entry["delivery_validated"] = True
 
-    result = await _create_final_invoice(entry, now, background_tasks)
+    result = await _create_final_invoice(entry, now, background_tasks, actor=current_user, trigger="retry")
     invoice_id = result["invoice_id"]
 
     update_set: dict = {"delivery_validated": True}
@@ -2155,7 +2284,7 @@ async def retroactive_confirm_packing(
     from routes.order_routes import _queue_packing_board  # deferred import, same defensive pattern order_routes.py itself already uses for packing_board_routes.manager
     _orig_status = ticket["status"]
     try:
-        await _queue_packing_board(order_id_int, background_tasks)
+        await _queue_packing_board(order_id_int, background_tasks, allow_delivered=True)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not create the packing entry: {str(e)}")
 
@@ -2270,7 +2399,7 @@ async def retroactive_confirm_invoice(
         raise HTTPException(status_code=400, detail="An invoice is already linked to this order")
 
     now = datetime.now(timezone.utc)
-    result = await _create_final_invoice(entry, now, background_tasks)
+    result = await _create_final_invoice(entry, now, background_tasks, actor=current_user, trigger="reconciliation")
     if not result.get("invoice_id"):
         raise HTTPException(status_code=502, detail=result.get("invoice_warning") or "Could not create or link the final invoice")
 
@@ -2773,6 +2902,138 @@ async def _reconcile_cancelled_ticket_boards(limit: int = 500, actor: Optional[d
     return {"scanned": len(orphans), "fixed_order_ids": fixed}
 
 
+async def _close_sales_ticket_quietly(order_id, actor: dict, note: str) -> bool:
+    """Close an order's open Sales ticket as Complete with an Activity Log
+    note, sending nothing (no customer, reseller or staff notification).
+    Used when an order ticket is cleared or closed as already fulfilled."""
+    t = await col("tickets").find_one({"type": "sales", "order_id": int(order_id), "exit_status": None})
+    if not t:
+        return False
+    now = datetime.now(timezone.utc)
+    await col("tickets").update_one({"_id": t["_id"]}, {
+        "$set": {"exit_status": "complete", "updated_at": now},
+        "$push": {"stage_history": {
+            "status": t.get("status"), "exit_status": "complete",
+            "actor_id": actor.get("id"), "actor_name": actor.get("name") or actor.get("username") or "System",
+            "at": now, "note": note,
+        }},
+    })
+    return True
+
+
+# ── Close Fulfilled Orders (2026-10-14, super admin) ─────────────────────────
+# Old orders delivered and paid entirely in Odoo, whose portal tickets were
+# still open, were put on the packing board by linking their paid invoices
+# on Expected Payments. Running them through packing would record false
+# packing and QA/RP sign-offs and could email customers who collected long
+# ago. This lists every open order ticket and every open early-stage Sales
+# ticket whose order Odoo shows as fully delivered, and closes them without
+# touching Odoo or emailing anyone. Preview first, then confirm.
+
+_ACTIVE_BOARD = ["queued", "packing", "ready", "waiting_stock"]
+_EARLY_TICKET = ["open", "quote", "sale_order", "awaiting_deposit", "confirmed_wip"]
+
+
+async def _find_fulfilled_orders() -> dict:
+    from routes.order_routes import order_fulfilment_state  # deferred: order_routes imports this module lazily too
+    entries = await col("packing_board").find(
+        {"status": {"$in": _ACTIVE_BOARD}},
+        {"_id": 1, "order_id": 1, "ps_num": 1, "status": 1, "odoo_picking_id": 1, "customer_name": 1,
+         "queued_at": 1, "qa_approved_at": 1, "rp_approved_at": 1, "is_backorder": 1},
+    ).to_list(length=1000)
+    tickets = await col("tickets").find(
+        {"type": "sales", "exit_status": None, "order_id": {"$ne": None}, "status": {"$in": _EARLY_TICKET}},
+        {"_id": 1, "order_id": 1, "status": 1, "customer_name": 1, "created_at": 1},
+    ).to_list(length=2000)
+    by_order: dict = {}
+    for e in entries:
+        if str(e.get("order_id", "")).isdigit():
+            by_order.setdefault(int(e["order_id"]), {"entries": [], "ticket": None})["entries"].append(e)
+    for t in tickets:
+        by_order.setdefault(int(t["order_id"]), {"entries": [], "ticket": None})["ticket"] = t
+    # Sales tickets for orders that only had a board entry
+    missing = [oid for oid, v in by_order.items() if not v["ticket"]]
+    if missing:
+        async for t in col("tickets").find({"type": "sales", "exit_status": None, "order_id": {"$in": missing}},
+                                           {"_id": 1, "order_id": 1, "status": 1, "customer_name": 1}):
+            by_order[int(t["order_id"])]["ticket"] = t
+    if not by_order:
+        return {"paid": [], "owing": []}
+    fs = order_fulfilment_state(get_odoo_client(), list(by_order))
+    paid, owing = [], []
+    for oid, v in by_order.items():
+        f = fs.get(oid) or {}
+        if not f.get("delivered"):
+            continue
+        t = v["ticket"]
+        row = {
+            "order_id": oid, "order_name": f.get("name"),
+            "customer_name": (t or {}).get("customer_name") or next((e.get("customer_name") for e in v["entries"]), ""),
+            "ticket_id": str(t["_id"]) if t else None,
+            "ticket_ref": f"TKT-{str(t['_id'])[-8:].upper()}" if t else None,
+            "ticket_status": (t or {}).get("status"),
+            "board": [{"ps_num": e.get("ps_num"), "status": e.get("status"), "picking_id": e.get("odoo_picking_id"),
+                       "signed_off": bool(e.get("qa_approved_at") or e.get("rp_approved_at"))} for e in v["entries"]],
+            "deliveries": f.get("done_deliveries"), "invoices": f.get("invoices"), "owing": f.get("owing", 0.0),
+        }
+        (owing if row["owing"] > 0.005 else paid).append(row)
+    key = lambda r: r["order_name"] or ""
+    return {"paid": sorted(paid, key=key), "owing": sorted(owing, key=key)}
+
+
+class CloseFulfilledBody(BaseModel):
+    order_ids: List[int]
+
+
+@router.get("/reconcile-fulfilled/preview")
+async def preview_close_fulfilled(current_user: dict = Depends(require_super_admin)):
+    """Read-only: open order tickets and early-stage Sales tickets whose order
+    Odoo shows as fully delivered, split into fully paid and still owing."""
+    try:
+        return await _find_fulfilled_orders()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+
+
+@router.post("/reconcile-fulfilled")
+async def close_fulfilled(body: CloseFulfilledBody, current_user: dict = Depends(require_super_admin)):
+    """Close the chosen orders: each active order ticket is cleared and the
+    Sales ticket closed as Complete, with an Activity Log note and an audit
+    entry. Re-checks Odoo at confirm time and skips any order no longer
+    fully delivered. Writes nothing to Odoo and sends no emails."""
+    try:
+        found = await _find_fulfilled_orders()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odoo error: {e}")
+    rows = {r["order_id"]: r for r in found["paid"] + found["owing"]}
+    wanted = {int(i) for i in body.order_ids}
+    now = datetime.now(timezone.utc)
+    actor_name = current_user.get("name") or current_user.get("username")
+    closed, skipped = [], []
+    for oid in sorted(wanted):
+        r = rows.get(oid)
+        if not r:
+            skipped.append(oid)
+            continue
+        note = (f"Closed by {actor_name}: already delivered in Odoo ({', '.join(r['deliveries'] or [])}) "
+                f"before the portal tracked it" + (f"; R{r['owing']:,.2f} still owing on its invoices" if r["owing"] > 0.005
+                                                    else "; invoices paid") + ". No packing, sign-off or customer email.")
+        await col("packing_board").update_many(
+            {"order_id": str(oid), "status": {"$in": _ACTIVE_BOARD}},
+            {"$set": {"status": "cleared", "cleared_at": now, "cleared_by": actor_name,
+                      "cleared_reason": "fulfilled_outside_portal"}},
+        )
+        ticket_closed = await _close_sales_ticket_quietly(oid, current_user, note)
+        await audit_log("packing.close_fulfilled", "packing_board", str(oid),
+                        entity_label=f"{r['order_name']} {r['customer_name']}", user=current_user,
+                        detail={"deliveries": r["deliveries"], "invoices": r["invoices"], "owing": r["owing"],
+                                "board": r["board"], "ticket_closed": ticket_closed})
+        closed.append(r["order_name"] or oid)
+    if closed:
+        await broadcast_monitor_refresh()
+    return {"closed": closed, "skipped": skipped}
+
+
 @router.get("/reconcile-cancelled/preview")
 async def preview_reconcile_cancelled_packing_boards(
     current_user: dict = Depends(require_permission("tickets.manage")),
@@ -3078,6 +3339,9 @@ async def override_status(
     entry = await col("packing_board").find_one(_entry_query(body.order_id, body.picking_id))
     if not entry:
         raise HTTPException(status_code=404, detail="Order not on board")
+    _clear_reason = (body.reason or "").strip()
+    if body.status == "cleared" and not _clear_reason:
+        raise HTTPException(status_code=400, detail="Give a reason for clearing this order ticket")
     # 8.69 — an override can't release unpaid goods either.
     if body.status == "collected":
         _t = await _linked_sales_ticket(body.order_id)
@@ -3088,9 +3352,13 @@ async def override_status(
                     status_code=400,
                     detail="This order's invoice isn't paid. Goods can't be marked collected until Finance records the payment.",
                 )
+    _set: dict = {"status": body.status}
+    if body.status == "cleared":
+        _set.update({"cleared_at": datetime.now(timezone.utc), "cleared_reason": _clear_reason,
+                     "cleared_by": current_user.get("name") or current_user.get("username")})
     updated = await col("packing_board").find_one_and_update(
         {"_id": entry["_id"]},
-        {"$set": {"status": body.status}},
+        {"$set": _set},
         return_document=True,
     )
     if not updated:
@@ -3100,7 +3368,23 @@ async def override_status(
     await push_update(updated)
     await audit_log("packing.override_status", "packing_board", body.order_id,
                     entity_label=body.order_id, user=current_user,
-                    detail={"from": entry["status"], "to": body.status})
+                    detail={"from": entry["status"], "to": body.status, "reason": _clear_reason or None})
+
+    # 2026-10-14 — clearing an order ticket closes its Sales ticket too (as
+    # Complete, with the reason), so no open Sales ticket is left behind;
+    # unless another delivery on the same order is still active.
+    if body.status == "cleared":
+        _others = await col("packing_board").count_documents({
+            "order_id": str(body.order_id), "_id": {"$ne": entry["_id"]},
+            "status": {"$nin": ["collected", "cleared", "cancelled", "complete", "incomplete"]},
+        })
+        if not _others:
+            await _close_sales_ticket_quietly(
+                body.order_id, current_user,
+                f"Order ticket cleared by {current_user.get('name') or current_user.get('username')}: {_clear_reason}",
+            )
+        await broadcast_monitor_refresh()
+        return {"success": True, "sales_ticket_closed": not _others}
 
     # Overriding to complete goes through the same hold-or-notify step as
     # Mark Complete, so an unpaid order is held rather than announced.

@@ -2366,8 +2366,66 @@ def _order_delivery_picking_ids(odoo, order_id: int) -> list:
     return open_ids + done_ids
 
 
-async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks, notify: bool = True) -> None:
+FULLY_DELIVERED_MSG = (
+    "Every delivery on this order is already done in Odoo, so there is nothing to pack. "
+    "If it was delivered before the portal tracked it, a super admin can close the ticket "
+    "from Orders Tickets > Close Fulfilled Orders."
+)
+
+
+def order_fulfilment_state(odoo, order_ids: list) -> dict:
+    """Odoo's view of whether orders are already fulfilled (2026-10-14).
+    {order_id: {name, delivered, open_deliveries, done_deliveries, owing,
+    invoices}}. `delivered` is True only when the order has at least one
+    outgoing delivery and every one of them is done. `owing` is what's still
+    unpaid on its posted customer invoices. Batched: three Odoo reads for any
+    number of orders. Orders with no delivery at all are never `delivered`."""
+    ids = sorted({int(i) for i in order_ids if i})
+    out = {i: {"name": None, "delivered": False, "open_deliveries": [], "done_deliveries": [],
+               "owing": 0.0, "invoices": []} for i in ids}
+    if not ids:
+        return out
+    for o in odoo.search_read("sale.order", [("id", "in", ids)], fields=["id", "name", "invoice_ids"], limit=len(ids)):
+        out[o["id"]]["name"] = o["name"]
+        out[o["id"]]["_inv"] = o.get("invoice_ids") or []
+    picks = odoo.search_read(
+        "stock.picking",
+        [("sale_id", "in", ids), ("picking_type_code", "=", "outgoing"), ("state", "!=", "cancel")],
+        fields=["sale_id", "name", "state"], limit=5000,
+    )
+    for p in picks:
+        sid = p["sale_id"][0] if p.get("sale_id") else None
+        if sid in out:
+            (out[sid]["done_deliveries"] if p["state"] == "done" else out[sid]["open_deliveries"]).append(p["name"])
+    inv_ids = sorted({i for v in out.values() for i in v.get("_inv", [])})
+    invs = {}
+    if inv_ids:
+        invs = {m["id"]: m for m in odoo.read("account.move", inv_ids,
+                fields=["name", "state", "move_type", "amount_residual", "payment_state"])}
+    for v in out.values():
+        for i in v.pop("_inv", []):
+            m = invs.get(i)
+            if not m or m.get("state") != "posted" or m.get("move_type") not in ("out_invoice", "out_refund"):
+                continue
+            sign = -1 if m["move_type"] == "out_refund" else 1
+            v["owing"] = round(v["owing"] + sign * float(m.get("amount_residual") or 0), 2)
+            v["invoices"].append(f"{m['name']} ({m.get('payment_state')})")
+        v["delivered"] = bool(v["done_deliveries"]) and not v["open_deliveries"]
+        v["owing"] = max(v["owing"], 0.0)
+    return out
+
+
+async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks, notify: bool = True,
+                               allow_delivered: bool = False) -> None:
     """
+    2026-10-14: refuses (RuntimeError, FULLY_DELIVERED_MSG) an order whose
+    every delivery is already done in Odoo: there is nothing to pack, and
+    putting it on the board would invite a false packing, QA/RP sign-off and
+    customer notice (found live: old orders, delivered and paid outside the
+    portal, were queued by linking their paid invoices on Expected
+    Payments). allow_delivered=True only for the reconciliation wizard's
+    retroactive packing step, which backfills a record for real past work.
+
     notify=False (8.69d, Finance's Expected Payments) skips the emails to the
     customer and their reseller (the "order confirmed" and backorder notices),
     for a deposit recorded on an old order the customer may already have
@@ -2392,6 +2450,10 @@ async def _queue_packing_board(order_id: int, background_tasks: BackgroundTasks,
     which re-calls this function when moving a ticket to confirmed_wip with no
     existing packing_board entry for its order.
     """
+    if not allow_delivered:
+        _fs = order_fulfilment_state(get_odoo_client(), [order_id]).get(int(order_id), {})
+        if _fs.get("delivered"):
+            raise RuntimeError(FULLY_DELIVERED_MSG)
     odoo = get_odoo_client()
     try:
         rows = odoo.read(

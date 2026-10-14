@@ -1149,14 +1149,34 @@ The order goes straight to the packing board. The customer is emailed that no de
 
 ### Expected Payments (2026-10-12)
 
-**Finance > Expected Payments** lists every payment to look out for: orders approved to pay before collection that aren't paid in full yet, and deposit orders packed and waiting on their balance.
+**Finance > Expected Payments** lists every payment to look out for: confirmed orders waiting on their 50% deposit, orders approved to pay before collection that aren't paid in full yet, and deposit orders packed and waiting on their balance.
 
 - **Packed & waiting** (default): the customer is waiting to hear their order is ready. Work these first. **Waiting** shows how many days it's been; 3 days shows At Risk, 7 shows Overdue
+- **Deposits due**: confirmed orders that can't be packed until the deposit is in. The amount shown is 50% of the order less anything already paid. A row can also say **Paid in Odoo, not linked** (click **Link Invoice** to use that payment as the deposit), **Deposit received, not on packing board** (an admin retries it from the Sales ticket), or that a no-deposit request is waiting for a decision
 - **Not packed yet**: approved orders still being packed or signed off
 - **Paid today**: orders released today, so you can confirm your payments landed and the customer was told
 - **All outstanding**: everything owing
 
+**Record Deposit** is pre-filled with the 50% deposit, but you can enter whatever the customer actually paid, up to the full order total. Under 10% of the order it warns you and asks for a reason.
+
+**Emailing the customer:** Record Deposit, Link Invoice and Record Payment each have an **Email the customer and their sales agent** tick box. It's off for deposits and links, because many of these orders are old and the customer may already have collected. It's on for packed orders waiting on payment, because that email tells the customer their order is ready. Untick it if they've already collected or been told.
+
 Search by customer, sales order number, invoice number or amount, which is useful when matching a bank line. Customers use the **sales order number** as their payment reference. **Proof of payment** shows when the customer has uploaded one, so check the bank. Click **Record Payment** to record it without leaving the page (it pays the open invoice, or records an advance payment if the order isn't invoiced yet). Click a row to open its Sales ticket. **Export** downloads the list to Excel.
+
+### Deposit invoices and existing payments (2026-10-14)
+
+**How deposits are invoiced.** When you register a deposit, Odoo creates a deposit invoice with a single **Down Payment** line, not the products. That's how Odoo works: products are invoiced when they're delivered, and nothing has been delivered yet. The deposit invoice is the record of the money received. When the order is marked complete, the **final invoice** lists every item and deducts the deposit automatically. If the customer paid 100% upfront, the final invoice comes to R0, already paid. The itemised document at the deposit stage is the pro-forma emailed to the customer.
+
+**Never cancel or reset a deposit invoice in Odoo.** Doing so unlinks the payment (it sits unallocated on the customer's account), and the final invoice then charges the full amount. When you open a deposit invoice in the portal, it now shows which order it's for and the items on it.
+
+**If a deposit invoice was cancelled,** the Sales ticket shows a red **Deposit invoice cancelled in Odoo** banner:
+- Before the order is marked complete, click **Restore Deposit Invoice**. It brings the invoice back with its original number and re-applies the customer's payment
+- If the final invoice has already been raised, the banner tells you to sort it out in Odoo: the payment may now be recorded twice
+- Until it's fixed, **Mark Complete** stops with an explanation, so a full-price invoice isn't sent to the customer. Finance or an admin can continue anyway with a reason (for example, the deposit was refunded)
+
+**Already delivered in Odoo.** An order that was delivered entirely in Odoo before the portal tracked it shows on Expected Payments as **Already delivered in Odoo**, with nothing to record. The portal won't put such an order on the packing board (by deposit, Link Invoice or otherwise). The super admin closes these with **Close Fulfilled Orders** on the Orders Tickets page: it lists every open ticket whose order Odoo shows as delivered, split into paid and still owing, and closes the ones you tick. Nothing changes in Odoo and no one is emailed.
+
+**Existing payments come first.** Whenever you record a deposit or a payment (on the Sales ticket, Expected Payments, the Invoices page, Order Passport or the customer profile), the window first lists any payments or credits already sitting unallocated on the customer's account. If the money is one of them, click **Apply** (or **Use as deposit**): nothing new is recorded, so it can't be counted twice. To record a new payment anyway, tick **This is a separate payment that has just arrived**.
 
 You don't need to use this page for the customer to be told: a payment recorded anywhere (the Sales ticket, the Invoices page, Bank Reconciliation, or straight in Odoo, picked up within 15 minutes or when the ticket is opened) releases the order automatically. You're emailed when an order goes on hold, and each morning at 08:00 with any packed order still unpaid after 3 days (Settings > Email Notifications > Finance: Payments).
 
@@ -1455,7 +1475,7 @@ When backorder entries are on the board:
 - It only reads what Odoo has already reserved and changes nothing in Odoo. If stock is on the shelf but an order still shows it as not reserved, open that order and click **Check Availability**
 
 **Reconciling cancelled tickets (admin only)**
-A **Reconcile Cancelled** button appears in the top bar for anyone with Admin Override permission. Click it if an order ticket is still showing active (and still appearing on the Operations Monitor) even though its Sales ticket was already cancelled or marked Not Interested. Clicking it never cancels anything by itself — it first shows you a preview listing exactly which order tickets would be cancelled and why (their reference, customer, current status, and the Sales ticket's exit status). Nothing is changed until you review that list and click Confirm inside it; if there is nothing to fix, it simply tells you so and closes. This is safe to run at any time — clicking it again once everything is already reconciled just shows an empty result. You will only normally need this after an ERP-side order cancellation that happened before the automatic sync existed, or if you are ever told by support that a specific batch of records needs reconciling.
+**Clearing an order ticket** (Override Stage > Cleared, admins only) now asks for a reason, takes the order off the board and closes its Sales ticket as Complete with that reason, unless another delivery on the same order is still active. A **Reconcile Cancelled** button appears in the top bar for anyone with Admin Override permission. Click it if an order ticket is still showing active (and still appearing on the Operations Monitor) even though its Sales ticket was already cancelled or marked Not Interested. Clicking it never cancels anything by itself — it first shows you a preview listing exactly which order tickets would be cancelled and why (their reference, customer, current status, and the Sales ticket's exit status). Nothing is changed until you review that list and click Confirm inside it; if there is nothing to fix, it simply tells you so and closes. This is safe to run at any time — clicking it again once everything is already reconciled just shows an empty result. You will only normally need this after an ERP-side order cancellation that happened before the automatic sync existed, or if you are ever told by support that a specific batch of records needs reconciling.
 
 ---
 
@@ -2611,7 +2631,7 @@ The Signing Authority card is visible only to staff who have been granted the `s
 ## Common Questions
 
 **Q: An order is stuck — how do I move it forward?**  
-Every stage in the pipeline can be overridden by someone with `tickets.manage` permission (typically the super admin or a senior admin). In the Orders Ticket detail, the **Override Stage** dropdown is available to that role and allows setting any status directly. This is the escape hatch for edge cases — use it carefully, as it is audit-logged.
+Only an admin or the super admin can override a stage (the **Admin Override** on a Sales Ticket and **Override Stage** on an Orders Ticket, permission "Override ticket stage manually"). Other staff move orders on with the **Next Step** and **Actions** on the ticket. The permission can't be given to a non-admin role, and the system refuses an override from anyone else. This is the escape hatch for edge cases; use it carefully, as it is audit-logged.
 
 **Q: A deposit was registered but the order never appeared on the packing board (Sales Ticket is stuck at "Awaiting Deposit" with a payment already showing).**  
 This happens if Odoo hadn't yet generated the order's delivery record at the moment the deposit was registered — the deposit itself is unaffected (it's already posted and paid in Odoo), but the packing board card couldn't be created. The ticket shows a red "Not yet queued for packing" notice on its detail page (and a "Not Queued" badge on the Sales Tickets list) explaining why. Once the delivery exists in Odoo, an admin with `tickets.manage` can retry from the Sales Ticket's own **Admin Override** panel: select **In Fulfilment** in the Stage dropdown and save — this re-attempts queueing the packing board rather than just relabelling the ticket. This retry is only available once a deposit has genuinely been registered (or the order is a sample) — it cannot be used to skip the deposit requirement.
@@ -2731,7 +2751,7 @@ Check the **Reservations** drill-down — click the icon next to the Forecasted 
 | Countersign a customer-signed onboarding document | User with `signing_authority.sign` and fully configured profile |
 | Configure commission tiers | Admin with `commission.configure_tiers` |
 | View audit trail | Admin with `audit.view` |
-| Override order pipeline stage | Admin with `tickets.manage` |
+| Override order pipeline stage | Admin or super admin with `tickets.manage` (admins only) |
 | Download onboarding template docs | Any authenticated user |
 | Email onboarding template docs to customer | Any authenticated user |
 | Upload signed documents (onboarding wizard) | Reseller |

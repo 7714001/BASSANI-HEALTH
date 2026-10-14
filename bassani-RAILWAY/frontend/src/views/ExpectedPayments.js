@@ -12,6 +12,7 @@
 //     way, a packed order whose invoice is now paid has its customer told
 //     it's ready to collect automatically.
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { UnallocatedPaymentsPanel, isUnallocatedError, errorText } from "../components/UnallocatedPayments";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Wallet, Download, Loader2, ExternalLink, Upload, Link2, AlertTriangle } from "lucide-react";
@@ -31,7 +32,7 @@ const VIEWS = [
 const STAGE_COLOR = {
   packed_waiting: "amber", packed_notified: "orange", signoff: "blue", packing: "blue",
   in_progress: "blue", approved: "gray", paid: "green",
-  deposit_due: "amber", deposit_unlinked: "purple", deposit_stuck: "red", deposit_requested: "indigo", deposit_held: "orange",
+  deposit_due: "amber", deposit_unlinked: "purple", deposit_stuck: "red", deposit_requested: "indigo", deposit_held: "orange", deposit_delivered: "gray",
 };
 const ARRANGEMENT_LABEL = {
   pay_before_collection: "Pay before collection", deposit: "Deposit balance", deposit_upfront: "50% deposit",
@@ -353,6 +354,12 @@ function RecordPaymentModal({ row, onClose, onDone }) {
     small_deposit_reason: "",
   });
   const [saving, setSaving] = useState(false);
+  // 8.72 — payments already on the customer's account, applied instead of
+  // recording the same money again.
+  const [credits, setCredits] = useState([]);
+  const [confirmNew, setConfirmNew] = useState(false);
+  const [applyingId, setApplyingId] = useState(null);
+  const needsConfirm = credits.length > 0 && !confirmNew;
   const enteredAmount = parseFloat(form.amount) || 0;
   const isSmallDeposit = isDeposit && enteredAmount > 0 && row.order_total > 0
     && enteredAmount < row.order_total * TOKEN_DEPOSIT_PCT / 100;
@@ -367,7 +374,45 @@ function RecordPaymentModal({ row, onClose, onDone }) {
       })
       .catch(e => toast.error(e.response?.data?.detail || "Could not load payment methods"))
       .finally(() => setLoadingJournals(false));
-  }, [row.order_id]);
+    api.get(`/api/tickets/${row.ticket_id}/unallocated-payments`)
+      .then(r => setCredits(r.data.credits || []))
+      .catch(() => {});
+  }, [row.order_id, row.ticket_id]);
+
+  const applyExisting = async (c) => {
+    setApplyingId(c.line_id);
+    try {
+      if (row.pay_mode === "invoice") {
+        const { data } = await api.post(`/api/tickets/${row.ticket_id}/apply-payment`, {
+          line_id: c.line_id, notify_customer: canNotify ? notify : false,
+        });
+        toast.success(`${c.reference} applied to ${data.invoice_name}.` + (data.customer_notified ? " The customer has been told it's ready to collect." : ""));
+      } else {
+        // Deposit or advance payment: the deposit invoice is created for the
+        // payment's amount and paid with that payment, no new payment.
+        const amount = Math.min(Number(c.amount), maxAmount);
+        const small = isDeposit && row.order_total > 0 && amount < row.order_total * TOKEN_DEPOSIT_PCT / 100;
+        if (small && !form.small_deposit_reason.trim()) {
+          setForm(f => ({ ...f, amount: amount.toFixed(2) }));
+          toast.error(`That payment is under ${TOKEN_DEPOSIT_PCT}% of the order. Give a reason below, then click Apply again.`);
+          return;
+        }
+        const { data } = await api.post(`/api/tickets/${row.ticket_id}/register-deposit`, {
+          invoice_type: "fixed", amount, date: c.date || form.date, use_credit_line_id: c.line_id,
+          note: form.note || undefined,
+          small_deposit_reason: small ? form.small_deposit_reason.trim() : undefined,
+          notify_customer: isDeposit ? notify : undefined,
+        });
+        if (data.warning) toast.error(data.warning, { duration: 8000 });
+        else toast.success(`${c.reference} applied as the ${isDeposit ? "deposit" : "payment"}.`);
+      }
+      onDone();
+    } catch (e) {
+      toast.error(errorText(e, "Could not apply the payment"));
+    } finally {
+      setApplyingId(null);
+    }
+  };
 
   const submit = async () => {
     const amount = parseFloat(form.amount);
@@ -377,6 +422,8 @@ function RecordPaymentModal({ row, onClose, onDone }) {
     if (isSmallDeposit && !form.small_deposit_reason.trim()) {
       return toast.error(`Give a reason for a deposit under ${TOKEN_DEPOSIT_PCT}% of the order`);
     }
+    if (needsConfirm) return toast.error("Apply one of the existing payments, or confirm this is a separate new payment");
+    const confirmNewPayment = credits.length > 0 && confirmNew;
     setSaving(true);
     try {
       if (isDeposit) {
@@ -385,6 +432,7 @@ function RecordPaymentModal({ row, onClose, onDone }) {
           note: form.note || undefined,
           small_deposit_reason: isSmallDeposit ? form.small_deposit_reason.trim() : undefined,
           notify_customer: notify,
+          confirm_new_payment: confirmNewPayment,
         });
         if (data.warning) toast.error(data.warning, { duration: 8000 });
         else toast.success("Deposit registered. The order is now on the packing board.");
@@ -392,12 +440,14 @@ function RecordPaymentModal({ row, onClose, onDone }) {
         await api.post(`/api/tickets/${row.ticket_id}/register-deposit`, {
           invoice_type: "fixed", amount, date: form.date, journal_id: parseInt(form.journal_id),
           note: form.note || undefined,
+          confirm_new_payment: confirmNewPayment,
         });
         toast.success("Payment recorded. It will be deducted from the final invoice.");
       } else {
         const { data } = await api.post(`/api/tickets/${row.ticket_id}/register-payment`, {
           amount, date: form.date, journal_id: parseInt(form.journal_id), note: form.note || undefined,
           notify_customer: canNotify ? notify : false,
+          confirm_new_payment: confirmNewPayment,
         });
         if (data.customer_notified) toast.success("Payment recorded. The customer has been told their order is ready to collect.");
         else if (data.released) toast.success("Payment recorded. The order is ready for collection; the customer was not emailed.");
@@ -406,7 +456,13 @@ function RecordPaymentModal({ row, onClose, onDone }) {
       }
       onDone();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not record the payment");
+      if (isUnallocatedError(e)) {
+        setCredits(e.response.data.detail.credits || []);
+        setConfirmNew(false);
+        toast.error("This customer has unallocated payments. Check them before recording a new one.");
+      } else {
+        toast.error(errorText(e, "Could not record the payment"));
+      }
     } finally {
       setSaving(false);
     }
@@ -438,6 +494,9 @@ function RecordPaymentModal({ row, onClose, onDone }) {
           board. Enter what the customer actually paid: it can be more or less than {DEPOSIT_PCT}%, up to the full order total.
         </p>
       )}
+      <UnallocatedPaymentsPanel credits={credits} onApply={applyExisting} applyingId={applyingId}
+        confirmNew={confirmNew} onConfirmNew={setConfirmNew} busy={saving}
+        applyLabel={row.pay_mode === "invoice" ? "Apply to invoice" : isDeposit ? "Use as deposit" : "Use this payment"} />
       <FormGroup label="Amount received (ZAR)" required>
         <Input type="number" step="0.01" min="0.01" value={form.amount}
           onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} autoFocus />
@@ -490,7 +549,7 @@ function RecordPaymentModal({ row, onClose, onDone }) {
       )}
       <div className="flex justify-end gap-2 mt-4">
         <BtnSecondary onClick={onClose} disabled={saving}>Cancel</BtnSecondary>
-        <BtnPrimary onClick={submit} disabled={saving || loadingJournals}>
+        <BtnPrimary onClick={submit} disabled={saving || loadingJournals || needsConfirm}>
           {saving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
           {isDeposit ? "Record Deposit" : "Record Payment"}
         </BtnPrimary>

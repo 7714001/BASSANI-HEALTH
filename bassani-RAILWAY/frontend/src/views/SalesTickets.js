@@ -35,6 +35,7 @@ import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
 import { DiscountAmountCell, DiscountTotalsCompare, ESTIMATE_NOTE } from "../components/DiscountBreakdown";
 import { roundPct, lineDiscount, orderTotals, liveOrderTotals, liveLineTaxRate, isInRequest } from "../utils/discountMath";
 import OrderView from "./OrderView";
+import { UnallocatedPaymentsPanel, DepositIssueBanner, isUnallocatedError, errorText } from "../components/UnallocatedPayments";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1561,6 +1562,45 @@ export default function SalesTickets() {
   const [pbcSaving, setPbcSaving]           = useState(false);
   const [releaseReqKind, setReleaseReqKind] = useState("pay_before_collection");
   const [depositMode, setDepositMode]       = useState("deposit"); // deposit | advance
+  // 8.72 — payments already on the customer's account (unallocated in
+  // Odoo), applied instead of recording the same money again; shared by the
+  // deposit and balance windows. And the cancelled-deposit restore.
+  const [paymentCredits, setPaymentCredits]       = useState([]);
+  const [confirmNewPayment, setConfirmNewPayment] = useState(false);
+  const [applyingCreditId, setApplyingCreditId]   = useState(null);
+  const [restoringDeposit, setRestoringDeposit]   = useState(false);
+
+  const loadPaymentCredits = (ticketId) => {
+    setPaymentCredits([]);
+    setConfirmNewPayment(false);
+    api.get(`/api/tickets/${ticketId}/unallocated-payments`)
+      .then(r => setPaymentCredits(r.data.credits || []))
+      .catch(() => {});
+  };
+  const onUnallocatedError = (e, fallback) => {
+    if (isUnallocatedError(e)) {
+      setPaymentCredits(e.response.data.detail.credits || []);
+      setConfirmNewPayment(false);
+      toast.error("This customer has unallocated payments. Check them before recording a new one.");
+    } else {
+      toast.error(errorText(e, fallback));
+    }
+  };
+
+  const restoreDeposit = async () => {
+    setRestoringDeposit(true);
+    const tid = detail.id;
+    try {
+      const { data } = await api.post(`/api/tickets/${tid}/restore-deposit`);
+      if (data.problems?.length) toast.error(data.problems.join(" "), { duration: 10000 });
+      else toast.success(`Deposit invoice restored${data.applied?.length ? " and its payment re-applied" : ""}.`);
+      refreshDetail(tid);
+    } catch (e) {
+      toast.error(errorText(e, "Could not restore the deposit invoice"));
+    } finally {
+      setRestoringDeposit(false);
+    }
+  };
 
   // Opens the modal immediately (2026-08-26, found live — the three parallel
   // fetches below, especially the Odoo payment-journals call, took long
@@ -1579,6 +1619,7 @@ export default function SalesTickets() {
     setDepositJournals([]);
     setDepositOrderTotal(0);
     setSmallDepositReason("");
+    loadPaymentCredits(detail.id);
     setDepositModal(true);
     setDepositDetailsLoading(true);
     (async () => {
@@ -1662,10 +1703,13 @@ export default function SalesTickets() {
     // stuck on its spinner.
     if (depositIsSmall && !smallDepositReason.trim())
       return toast.error("Give a reason for a deposit under 10% of the order, or use Request No Deposit");
+    if (paymentCredits.length > 0 && !confirmNewPayment)
+      return toast.error("Apply one of the existing payments, or confirm this is a separate new payment");
     setDepositSaving(true);
     const tid = detail.id;
     const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined,
-                   small_deposit_reason: depositIsSmall ? smallDepositReason.trim() : undefined };
+                   small_deposit_reason: depositIsSmall ? smallDepositReason.trim() : undefined,
+                   confirm_new_payment: paymentCredits.length > 0 && confirmNewPayment };
     if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
     if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
     try {
@@ -1679,8 +1723,35 @@ export default function SalesTickets() {
       }
       setDepositModal(false);
       refreshDetail(tid);
-    } catch (e) { toast.error(e.response?.data?.detail || "Deposit registration failed"); }
+    } catch (e) { onUnallocatedError(e, "Deposit registration failed"); }
     finally { setDepositSaving(false); }
+  };
+
+  // 8.72 — use a payment already on the customer's account as the deposit
+  // (or the advance payment): the deposit invoice is created for that
+  // amount and paid with it, so no new payment is recorded.
+  const applyCreditToDeposit = async (c) => {
+    const owingCap = depositOrderTotal > 0 ? depositOrderTotal : Number(c.amount);
+    const amount = Math.min(Number(c.amount), owingCap);
+    const small = depositMode !== "advance" && depositOrderTotal > 0 && amount < depositOrderTotal * 0.10;
+    if (small && !smallDepositReason.trim()) {
+      setDepositForm(f => ({ ...f, invoice_type: "fixed", amount: amount.toFixed(2) }));
+      return toast.error("That payment is under 10% of the order. Give a reason for the small deposit, then click Use as deposit again.");
+    }
+    setApplyingCreditId(c.line_id);
+    const tid = detail.id;
+    try {
+      const { data } = await api.post(`/api/tickets/${tid}/register-deposit`, {
+        invoice_type: "fixed", amount, date: c.date || depositForm.date, use_credit_line_id: c.line_id,
+        note: depositForm.note || undefined,
+        small_deposit_reason: small ? smallDepositReason.trim() : undefined,
+      });
+      if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
+      else toast.success(`${c.reference} applied as the ${depositMode === "advance" ? "payment" : "deposit"}.`);
+      setDepositModal(false);
+      refreshDetail(tid);
+    } catch (e) { toast.error(errorText(e, "Could not apply the payment")); }
+    finally { setApplyingCreditId(null); }
   };
 
   const releaseOnAccount = async () => {
@@ -1864,6 +1935,7 @@ export default function SalesTickets() {
     setBalanceForm({ amount: "", date: today, journal_id: "", note: "" });
     setBalanceInfo(null);
     setBalanceJournals([]);
+    loadPaymentCredits(detail.id);
     setBalanceModal(true);
     setBalanceDetailsLoading(true);
     (async () => {
@@ -1892,6 +1964,8 @@ export default function SalesTickets() {
   const registerBalance = async () => {
     if (!balanceForm.amount || !balanceForm.date || !balanceForm.journal_id)
       return toast.error("Amount, date and payment method are required");
+    if (paymentCredits.length > 0 && !confirmNewPayment)
+      return toast.error("Apply one of the existing payments, or confirm this is a separate new payment");
     setBalanceSaving(true);
     const tid = detail.id;
     try {
@@ -1900,6 +1974,7 @@ export default function SalesTickets() {
         date:       balanceForm.date,
         journal_id: parseInt(balanceForm.journal_id),
         note:       balanceForm.note || undefined,
+        confirm_new_payment: paymentCredits.length > 0 && confirmNewPayment,
       });
       const residual = r.data.amount_residual;
       if (r.data.customer_notified) {
@@ -1911,8 +1986,22 @@ export default function SalesTickets() {
       }
       setBalanceModal(false);
       refreshDetail(tid);
-    } catch (e) { toast.error(e.response?.data?.detail || "Payment registration failed"); }
+    } catch (e) { onUnallocatedError(e, "Payment registration failed"); }
     finally { setBalanceSaving(false); }
+  };
+
+  // 8.72 — apply a payment already on the account to the open invoice.
+  const applyCreditToBalance = async (c) => {
+    setApplyingCreditId(c.line_id);
+    const tid = detail.id;
+    try {
+      const { data } = await api.post(`/api/tickets/${tid}/apply-payment`, { line_id: c.line_id });
+      toast.success(`${c.reference} applied to ${data.invoice_name}.`
+        + (data.customer_notified ? " The customer has been told their order is ready to collect." : ""));
+      setBalanceModal(false);
+      refreshDetail(tid);
+    } catch (e) { toast.error(errorText(e, "Could not apply the payment")); }
+    finally { setApplyingCreditId(null); }
   };
 
   // ── Order detail payment breakdown (2026-08-26) ─────────────────────────────
@@ -2280,6 +2369,14 @@ export default function SalesTickets() {
                   border, one compact line plus a muted audit caption —
                   deliberately calmer than a hard-failure banner: this is a
                   to-do, not something broken. */}
+              {/* 8.72 — deposit invoice cancelled in Odoo */}
+              {detail.deposit_issue && (
+                <div className="mb-5">
+                  <DepositIssueBanner issue={detail.deposit_issue} canRestore={can("tickets.finance_confirm")}
+                    onRestore={restoreDeposit} restoring={restoringDeposit} />
+                </div>
+              )}
+
               {detail.override_gaps?.length > 0 && (
                 <div className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -4236,6 +4333,9 @@ export default function SalesTickets() {
                 </div>
               </div>
             )}
+            <UnallocatedPaymentsPanel credits={paymentCredits} onApply={applyCreditToDeposit} applyingId={applyingCreditId}
+              confirmNew={confirmNewPayment} onConfirmNew={setConfirmNewPayment} busy={depositSaving}
+              applyLabel={depositMode === "advance" ? "Use this payment" : "Use as deposit"} />
             <FormGroup label={depositMode === "advance" ? "Amount type" : "Invoice Type"} required>
               <div className="space-y-2">
                 {[
@@ -4307,7 +4407,7 @@ export default function SalesTickets() {
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerDeposit} disabled={depositSaving || depositDetailsLoading}>
+              <BtnPrimary onClick={registerDeposit} disabled={depositSaving || depositDetailsLoading || (paymentCredits.length > 0 && !confirmNewPayment)}>
                 {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
                 {depositMode === "advance" ? "Record Payment" : "Register in Odoo"}
               </BtnPrimary>
@@ -4629,6 +4729,9 @@ export default function SalesTickets() {
                 )}
               </p>
             )}
+            <UnallocatedPaymentsPanel credits={paymentCredits} onApply={applyCreditToBalance} applyingId={applyingCreditId}
+              confirmNew={confirmNewPayment} onConfirmNew={setConfirmNewPayment} busy={balanceSaving}
+              applyLabel="Apply to invoice" />
             <FormGroup label="Amount (ZAR)" required>
               <Input
                 type="number" step="0.01" min="0.01"
@@ -4671,7 +4774,10 @@ export default function SalesTickets() {
             </FormGroup>
             <div className="flex justify-end gap-2 mt-4">
               <BtnSecondary onClick={() => setBalanceModal(false)} disabled={balanceSaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerBalance} loading={balanceSaving} disabled={balanceDetailsLoading}>Register in Odoo</BtnPrimary>
+              <BtnPrimary onClick={registerBalance} loading={balanceSaving}
+                disabled={balanceDetailsLoading || (paymentCredits.length > 0 && !confirmNewPayment)}>
+                {paymentCredits.length > 0 ? "Record New Payment" : "Register in Odoo"}
+              </BtnPrimary>
             </div>
           </Modal>
         )}

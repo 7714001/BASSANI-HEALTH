@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import {
   fmtDate, BtnSecondary, BtnPrimary, BtnDanger, Modal,
-  FormGroup, Input, Select, LoadingState, OdooPdfViewerModal, StatCard,
+  LoadingState, OdooPdfViewerModal, StatCard,
   ageTierTextClass, AgeTierBadge,
 } from "../components/UI";
 import RecurringOrderSetupModal from "../components/RecurringOrderSetupModal";
@@ -18,6 +18,7 @@ import NewSupportCaseModal from "../components/NewSupportCaseModal";
 import { SupportStatusBadge, RatingForm, StarRating, RATING_WORDS } from "../components/SupportKit";
 import { HorizontalTimelineCard, ticketStageLabel, ActivityLogCard } from "../components/OrderTimeline";
 import DeliveryFulfilmentCard from "../components/DeliveryFulfilmentCard";
+import RegisterPaymentModal from "../components/RegisterPaymentModal";
 
 const fmtR = (n) =>
   `R ${(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -345,47 +346,11 @@ export default function OrderPassport() {
     }
   };
 
-  // Register payment — tracks which invoice is being paid
+  // Register payment — the shared RegisterPaymentModal (8.72): company-scoped
+  // payment methods, and existing unallocated payments offered before a new
+  // one is recorded. This page used to carry its own copy of the window.
   const [payingInvoice, setPayingInvoice] = useState(null);
-  const [payJournals,   setPayJournals  ] = useState([]);
-  const [payForm,       setPayForm      ] = useState({ amount: "", date: "", journal_id: "" });
-  const [paySaving,     setPaySaving    ] = useState(false);
-
-  const openPayModal = async (inv) => {
-    setPayingInvoice(inv);
-    setPayForm({
-      amount:     String(inv.amount_residual || inv.amount_total || ""),
-      date:       new Date().toISOString().split("T")[0],
-      journal_id: "",
-    });
-    try {
-      const r = await api.get("/api/invoices/payment-journals");
-      const journals = r.data.journals || [];
-      setPayJournals(journals);
-      if (journals.length > 0) setPayForm(f => ({ ...f, journal_id: String(journals[0].id) }));
-    } catch { setPayJournals([]); }
-  };
-
-  const registerPayment = async () => {
-    if (!payingInvoice) return;
-    if (!payForm.journal_id) return toast.error("Select a payment journal");
-    if (!payForm.amount || Number(payForm.amount) <= 0) return toast.error("Enter a valid amount");
-    setPaySaving(true);
-    try {
-      await api.put(`/api/invoices/${payingInvoice.invoice_id}/pay`, {
-        journal_id:   parseInt(payForm.journal_id),
-        payment_date: payForm.date || undefined,
-        amount:       parseFloat(payForm.amount),
-      });
-      toast.success("Payment registered");
-      setPayingInvoice(null);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Payment failed");
-    } finally {
-      setPaySaving(false);
-    }
-  };
+  const openPayModal = (inv) => setPayingInvoice(inv);
 
   // Confirm Order (2026-08-25) — reseller/customer's "My Orders" list now
   // routes here for the order detail (previously the OrderView.js invoice
@@ -1649,41 +1614,15 @@ export default function OrderPassport() {
 
       {/* ── Register Payment modal ─────────────────────────────────────────── */}
       {payingInvoice && (
-        <Modal title={`Register Payment — ${payingInvoice.name}`} onClose={() => setPayingInvoice(null)}>
-          <div className="space-y-3">
-            <FormGroup label="Journal">
-              <Select
-                value={payForm.journal_id}
-                onChange={e => setPayForm(f => ({ ...f, journal_id: e.target.value }))}
-              >
-                <option value="">Select journal…</option>
-                {payJournals.map(j => (
-                  <option key={j.id} value={String(j.id)}>{j.name}</option>
-                ))}
-              </Select>
-            </FormGroup>
-            <FormGroup label="Amount (R)">
-              <Input
-                type="number" step="0.01" min="0"
-                value={payForm.amount}
-                onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
-              />
-            </FormGroup>
-            <FormGroup label="Payment Date">
-              <Input
-                type="date"
-                value={payForm.date}
-                onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))}
-              />
-            </FormGroup>
-            <div className="flex justify-end gap-2 pt-2">
-              <BtnSecondary onClick={() => setPayingInvoice(null)} disabled={paySaving}>Cancel</BtnSecondary>
-              <BtnPrimary onClick={registerPayment} loading={paySaving} disabled={paySaving}>
-                Register Payment
-              </BtnPrimary>
-            </div>
-          </div>
-        </Modal>
+        <RegisterPaymentModal
+          invoice={{
+            id: payingInvoice.invoice_id, name: payingInvoice.name,
+            amount_residual: payingInvoice.amount_residual, amount_total: payingInvoice.amount_total,
+            partner_id: [null, order?.partner_id?.[1] || ""],
+          }}
+          onClose={() => setPayingInvoice(null)}
+          onPaid={load}
+        />
       )}
 
       {/* ── Ticket preflight modal ─────────────────────────────────────────── */}

@@ -16,6 +16,7 @@ import SendRecipientsModal from "../components/SendRecipientsModal";
 import RegisterPaymentModal from "../components/RegisterPaymentModal";
 import CreditNoteModal from "../components/CreditNoteModal";
 import NewSupportCaseModal from "../components/NewSupportCaseModal";
+import { DepositForOrderPanel } from "../components/UnallocatedPayments";
 
 // ── Static Bassani details ─────────────────────────────────────────────────────
 const BASSANI = {
@@ -113,6 +114,7 @@ function BarcodeImg({ text, style }) {
 // ── Invoice print view ─────────────────────────────────────────────────────────
 
 function InvoiceView({ invoice, onClose }) {
+  const { user } = useAuth();
   const printRef = useRef();
   const [odooPdfOpen, setOdooPdfOpen] = useState(false);
 
@@ -190,6 +192,9 @@ function InvoiceView({ invoice, onClose }) {
         />
       )}
       <div className="flex-1 overflow-y-auto py-8 px-4">
+        {/* 8.72 — kept outside printRef so it never prints on the invoice */}
+        <DepositForOrderPanel deposit={invoice.deposit_for_order} staff={!["reseller", "customer"].includes(user?.role)}
+          className="mx-auto mb-4 max-w-[794px]" />
         <div ref={printRef} className="bg-white shadow-lg mx-auto"
           style={{ width: 794, minHeight: 1123, padding: "48px 48px 40px", fontFamily: "system-ui, sans-serif", fontSize: 12, color: "#111", display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 36 }}>

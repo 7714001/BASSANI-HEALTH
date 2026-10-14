@@ -6,12 +6,15 @@ import logging
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date as date_type, datetime, timezone
-from auth import get_current_user, require_admin, require_permission
+from auth import get_current_user, require_admin, require_permission, require_any_permission
 from odoo_client import get_odoo_client, odoo as odoo_call, fetch_report_pdf
 from database import col, NO_ID
 from middleware.audit import audit_log
 from ownership import is_partner_owned_by
 from services.email_service import send_invoice_email
+from deposit_integrity import (
+    invoice_outstanding, apply_credit as _apply_credit, unallocated_detail,
+)
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 logger = logging.getLogger(__name__)
@@ -333,6 +336,43 @@ async def _assert_invoice_owned_by_external_role(odoo, current_user: dict, partn
             raise HTTPException(status_code=403, detail="Access denied")
 
 
+def _deposit_for_order(odoo, invoice: dict) -> Optional[dict]:
+    """If this invoice is a pure deposit (down payment) invoice, the order
+    it's a deposit for: name, total and its product lines. None otherwise or
+    on any error (display only)."""
+    try:
+        if invoice.get("move_type") not in (None, "out_invoice"):
+            return None
+        from routes.packing_board_routes import down_payment_invoice_ids  # deferred: avoids an import cycle
+        if invoice["id"] not in down_payment_invoice_ids(odoo, [invoice["id"]]):
+            return None
+        origin = invoice.get("invoice_origin")
+        if not origin:
+            return None
+        so = odoo.search_read("sale.order", [("name", "=", origin)],
+                              fields=["id", "name", "amount_total", "amount_untaxed", "state"], limit=1)
+        if not so:
+            return None
+        so = so[0]
+        lines = odoo.search_read(
+            "sale.order.line",
+            [("order_id", "=", so["id"]), ("display_type", "=", False), ("is_downpayment", "=", False)],
+            fields=["name", "product_uom_qty", "price_unit", "discount", "price_subtotal"], limit=500,
+        )
+        return {
+            "order_id": so["id"], "order_name": so["name"],
+            "order_total": so.get("amount_total"), "order_untaxed": so.get("amount_untaxed"),
+            "deposit_pct": round(100 * float(invoice.get("amount_total") or 0) / float(so["amount_total"]), 1)
+                           if so.get("amount_total") else None,
+            "lines": [{"name": ((l.get("name") or "").splitlines() or [""])[-1], "qty": l.get("product_uom_qty"),
+                       "price_unit": l.get("price_unit"), "discount": l.get("discount"),
+                       "subtotal": l.get("price_subtotal")} for l in lines],
+        }
+    except Exception as e:
+        logger.warning("deposit_for_order_failed invoice=%s error=%s", invoice.get("id"), e)
+        return None
+
+
 # ":int" so this only matches numeric ids. Without it, the literal GET routes
 # registered further down this file (/credit-note-journals,
 # /credit-note-requests) were swallowed by this route and failed validation,
@@ -405,6 +445,12 @@ async def get_invoice(invoice_id: int, current_user: dict = Depends(get_current_
                 )
 
             invoice["lines"] = lines
+
+        # 8.72 — a deposit (down payment) invoice only carries one "Down
+        # Payment" line: Odoo invoices products on delivery, and nothing is
+        # delivered yet. Show the order it's a deposit for, with its items,
+        # so it's never mistaken for a wrong invoice (and cancelled).
+        invoice["deposit_for_order"] = _deposit_for_order(odoo, invoice)
 
         # Lot/batch numbers — resolve via linked sale order (invoice_origin → sale.order → stock.picking → stock.move.line)
         invoice["lot_map"] = {}
@@ -542,6 +588,9 @@ class PaymentRegister(BaseModel):
     journal_id: int
     payment_date: Optional[str] = None   # ISO date string, defaults to today
     amount: Optional[float] = None       # defaults to full outstanding amount
+    # 8.72 — must be True to record a NEW payment when the customer already
+    # has unallocated payments or credits that could be applied instead.
+    confirm_new_payment: bool = False
 
 
 
@@ -581,6 +630,17 @@ async def register_payment(
             detail=f"{j_rows[0]['name']} ({j_rows[0]['company_id'][1]}) belongs to a different company from this invoice. Choose a payment method for the invoice's own company.",
         )
 
+    # 8.72 — never record a second payment when Odoo already holds one that
+    # could be applied: the caller must apply it (allocate-credit) or confirm
+    # this is a separate payment that genuinely arrived.
+    if not body.confirm_new_payment:
+        try:
+            _inv, _credits = invoice_outstanding(odoo, invoice_id)
+        except Exception:
+            _credits = []
+        if _credits:
+            raise HTTPException(status_code=409, detail=unallocated_detail(_credits, "invoice"))
+
     # Resolve outstanding amount if not provided
     amount = body.amount
     if amount is None:
@@ -609,7 +669,8 @@ async def register_payment(
             {},
         )
         await audit_log("invoice.pay", "invoice", invoice_id, user=current_user,
-                        detail={"amount": amount, "payment_date": payment_date, "journal_id": body.journal_id})
+                        detail={"amount": amount, "payment_date": payment_date, "journal_id": body.journal_id,
+                                "confirmed_new_despite_unallocated": body.confirm_new_payment})
         await _release_collection_holds_for(invoice_id, background_tasks)
         return {"success": True}
     except Exception as e:
@@ -624,30 +685,17 @@ async def register_payment(
 # matches it with js_assign_outstanding_line (public, live-checked on Odoo 19).
 
 def _outstanding_credits(odoo, invoice_id: int) -> tuple:
-    rows = odoo.read(
-        "account.move", [invoice_id],
-        fields=["name", "state", "move_type", "amount_residual", "partner_id",
-                "invoice_has_outstanding", "invoice_outstanding_credits_debits_widget"],
-    )
-    if not rows:
+    inv, items = invoice_outstanding(odoo, invoice_id)
+    if inv is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    inv = rows[0]
-    widget = inv.get("invoice_outstanding_credits_debits_widget") or {}
-    items = []
-    if isinstance(widget, dict) and widget.get("outstanding"):
-        for c in widget.get("content") or []:
-            items.append({
-                "line_id": c.get("id"),
-                "reference": c.get("journal_name") or c.get("move_ref") or "",
-                "amount": c.get("amount") or 0.0,
-                "date": c.get("date"),
-                "is_payment": bool(c.get("account_payment_id")),
-            })
     return inv, items
 
 
 @router.get("/{invoice_id}/outstanding-credits")
-async def list_outstanding_credits(invoice_id: int, current_user: dict = Depends(require_admin)):
+async def list_outstanding_credits(
+    invoice_id: int,
+    current_user: dict = Depends(require_any_permission("invoices.record_payment", "tickets.finance_confirm")),
+):
     """Payments and credit notes on this customer's account that are not yet
     matched to any invoice and could be applied to this one."""
     odoo = get_odoo_client()
@@ -680,17 +728,10 @@ async def allocate_credit(
         raise HTTPException(status_code=400, detail="That payment or credit is no longer available for this invoice")
     before = inv.get("amount_residual") or 0.0
     try:
-        odoo_call("account.move", "js_assign_outstanding_line", [[invoice_id], body.line_id])
+        _res = _apply_credit(odoo, invoice_id, body.line_id)
     except Exception as e:
-        # Same response-serialisation quirk register_deposit hit: the match
-        # can succeed even though the reply fails to marshal. Only treat it as
-        # success if the invoice balance genuinely went down.
-        after_rows = odoo.read("account.move", [invoice_id], fields=["amount_residual"])
-        after = after_rows[0].get("amount_residual") if after_rows else before
-        if not (after < before - 0.005):
-            raise HTTPException(status_code=502, detail=f"Could not allocate: {e}")
-    after_rows = odoo.read("account.move", [invoice_id], fields=["amount_residual", "payment_state"])
-    after = after_rows[0] if after_rows else {}
+        raise HTTPException(status_code=502, detail=f"Could not allocate: {e}")
+    after = {"amount_residual": _res["after"], "payment_state": _res["payment_state"]}
     await audit_log(
         "invoice.credit_allocated", "invoice", invoice_id,
         entity_label=inv.get("name") or "", user=current_user,
