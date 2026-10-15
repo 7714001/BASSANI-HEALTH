@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     resend_api_key:   str = ""
     sender_email:     str = "noreply@bassanihealth.com"
     support_email:    str = "support@bassanihealth.com"
+    # 28.6: true once Odoo receives mail sent to support_email (its incoming
+    # mail server fetches that mailbox). Customer support emails then reply-to
+    # it, and replies land on the right helpdesk ticket.
+    support_inbound_enabled: bool = False
     healthcare_email: str = "healthcare@bassanihealth.com"
     packing_emails:   str = "packing@bassanihealth.com,warehouse@bassanihealth.com"
     portal_url:       str = "https://portal.bassanihealth.com"

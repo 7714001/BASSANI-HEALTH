@@ -6507,7 +6507,7 @@ Bassani's own spec named "Counter A / Counter B," with Counter A described as a 
 
 ## Phase 28 — Customer Support Desk (Queries, Complaints & Order Feedback)
 
-**Status:** 🟡 Built 2026-10-06 — awaiting live testing
+**Status:** 🟡 Built 2026-10-06 — awaiting live testing. Moved onto Odoo Helpdesk 2026-10-15 (28.6), awaiting live testing
 
 ### Context
 
@@ -6519,7 +6519,7 @@ The product owner's direction (2026-10-06): add an industry-standard helpdesk; d
 
 - **One queue, three ways in.** Portal users (customer/reseller roles) raise requests in-portal; customers without a login use signed links in the emails they already receive; staff log requests on a customer's behalf (phone, walk-in, email). Every path goes through the same `_create_case_core()`/`_add_message_core()` so behaviour cannot drift.
 - **No-login access via stateless signed links** (`backend/support_links.py`), not stored tokens. An *order* link (`/help/order/<token>`, 180 days) is embedded in the pro-forma, invoice, ready-for-collection and post-collection feedback emails; a *case* link (`/help/case/<token>`) is in every support email to the customer. Links carry an `aud` claim and no `sub`, so they can never be used as a login token (verified: the auth decoder rejects them with `InvalidAudienceError`). Scope is one order or one case only.
-- **MongoDB only** (`support_cases`, `order_feedback`), Architecture Principle #5. Odoo is read for order/invoice/customer context, never written.
+- ~~**MongoDB only** (`support_cases`, `order_feedback`), Architecture Principle #5. Odoo is read for order/invoice/customer context, never written.~~ **Superseded by 28.6 (2026-10-15):** every request is now an Odoo Helpdesk ticket; only order ratings stay portal-side.
 - **Product quality complaints are a compliance track inside the same queue** (EU GMP Chapter 8). Routed to QA/RP; only a `support.quality_review` holder can resolve or close one, and only after a recorded quality review (investigation, root cause, outcome, CAPA, recall decision, SAHPRA adverse-event report flag). A possible adverse reaction auto-escalates to Urgent.
 - **Industry-standard lifecycle:** New → Open → Awaiting Customer → Resolved → Closed. A staff reply hands the request to the customer (SLA clock stops); a customer reply hands it back (clock restarts) and reopens a resolved request. Resolved requests auto-close after 7 days; the customer can confirm and rate (CSAT) instead.
 - **Response targets per priority:** Urgent 4h, High 8h, Normal 24h, Low 48h (calendar hours), using the same tier thresholds as `services/age_tier.py` so "Overdue"/"At Risk" mean the same thing everywhere.
@@ -6583,7 +6583,7 @@ The product owner's direction (2026-10-06): add an industry-standard helpdesk; d
 
 ### Not built (deliberately)
 
-- **Inbound email-to-case** (a customer replying directly to a support email). Replies go through the link instead, which keeps attachments and identity reliable. The existing Sales/Orders inboxes still receive anything emailed to them; converting an inbox thread into a case is a natural follow-up.
+- ~~**Inbound email-to-case**~~ Built in 28.6 via Odoo's own mail gateway, pending the Odoo-side mail setup.
 - **Returns / RMA** stays deferred (`return_routes.py` backend exists, no UI). A justified quality complaint's recall/return is recorded in the quality review notes for now.
 - **Business-hours SLA calendar.** Targets run on calendar hours, consistent with the rest of the portal.
 - **Customer 360 support card** on `CustomerProfile.js`: staff can search the desk by customer name meanwhile.
@@ -6599,3 +6599,52 @@ The product owner's direction (2026-10-06): add an industry-standard helpdesk; d
 - `frontend/src/views/Support.js`, `frontend/src/views/PublicSupport.js`
 - `frontend/src/components/SupportKit.js`, `frontend/src/components/NewSupportCaseModal.js`
 - `frontend/src/views/OrderPassport.js`, `Invoices.js`, `Users.js`, `EmailSettings.js`, `components/UI.js`, `App.js`
+
+### 28.6 — Support requests stored in Odoo Helpdesk
+
+**Context (2026-10-15):** with Odoo access, the product owner found the Helpdesk app installed (Helpdesk, Website Helpdesk, Helpdesk After Sales, Ratings and Quality, all on Odoo 19 Enterprise) but unused: 0 tickets, no response-time rules, ratings off, one auto-created "Customer Care" team per company with an email address on each. Phase 28 had never considered it and kept everything in MongoDB. Direction: Odoo is the source of truth for support too, and the portal should depend on as little of its own data as possible.
+
+**Decisions (product owner, 2026-10-15):**
+1. Odoo never emails the customer. The portal keeps sending every support email itself (Resend, portal branding).
+2. Assignees stay portal users. Handlers aren't licensed Odoo users and won't become ones for this.
+3. Customers can reply to support emails directly, once Odoo receives mail for the support address (see below).
+4. Customers keep using the portal's own no-login pages (`/help/...`), not Odoo's ticket pages on the odoo.com domain.
+5. A plain order rating stays portal-side; only a 1–2 star rating becomes an Odoo ticket.
+
+**What lives where:**
+
+| Data | Where |
+|---|---|
+| Request: subject, customer, company/team, linked sales order, stage, priority, type | Odoo `helpdesk.ticket` (type = `helpdesk.tag`; Odoo 19 has no ticket types) |
+| Conversation, internal notes, attachments | Ticket chatter (`mail.message`, public vs Note subtype) and `ir.attachment` |
+| Customer's rating of a resolved request | Odoo `rating.rating` |
+| Product quality complaint investigation | Odoo `quality.alert` (title, description, corrective action, product, lots, stage) |
+| Assignee, who raised it, contact name/email, invoice link, response-target clock, portal author per message, quality outcome / recall / SAHPRA answers, closed vs resolved | `support_case_meta` (Mongo, keyed by Odoo ticket id) |
+| Order ratings | `order_feedback` (Mongo), unchanged |
+
+Stage mapping: New / In Progress (open) / On Hold (awaiting customer) / Solved (resolved, and closed once `closed_at` is set) / Cancelled (closed without resolving). Ticket company = the order's or invoice's company, else the default warehouse's company; the team is that company's helpdesk team.
+
+**Tasks:**
+- [x] `backend/services/helpdesk_odoo.py`: the only Odoo gateway for support (tickets, stages, tags, chatter, attachments, ratings, quality alerts, inbound email cursor). Writes run with tracking disabled so the New stage's "Ticket Received" template never fires; the customer is unsubscribed from the ticket after create; `partner_email`/`partner_phone` are never written (helpdesk would copy them onto the customer's own contact)
+- [x] `support_routes.py` rewritten on top of it; API shape unchanged for the frontend. Request refs are Odoo's own ticket numbers (`#12`), replacing `SUP-00001`
+- [x] Staff messages show in Odoo's chatter under the staff member's name ("Name (Bassani Health)"); a customer login posts as its own Odoo contact; a no-login customer by name and email
+- [x] Assign, close and auto-close add an internal note to the ticket so its history also reads correctly in Odoo
+- [x] Quality review creates/updates an Odoo Quality alert, linked on the request
+- [x] Attachments are streamed from Odoo by the backend (frontend fetches a blob; `openSupportFile()` in `SupportKit.js`)
+- [x] Customer emails carry `References`/`In-Reply-To` = the Odoo message's Message-ID and reply-to the support address when `SUPPORT_INBOUND_ENABLED=true`, so an emailed reply files itself on the ticket
+- [x] `run_support_inbound_sync` (every 5 min): new tickets Odoo created from emails to the support address get a portal record, the General team is told and the customer gets our acknowledgement; replies on existing requests reopen them and notify the assignee. Starts from "now" on first run, never replays history
+- [ ] **Odoo-side setup (whoever administers Odoo):** (a) receive mail for the support address: either add an Incoming Mail Server on the `support@bassanihealth.com` mailbox (the existing `sales@` incoming server is still in Draft, never confirmed) or forward that mailbox to a team's alias; (b) remove the email template from the Helpdesk **New** stage so emailed-in tickets don't also get Odoo's own "Ticket Received" email; (c) tidy teams during the reimplementation: ~35 helpdesk teams/aliases exist, many for archived companies or internal departments (CEO office, CFO, HR); only one per trading company is needed
+- [ ] Set `SUPPORT_INBOUND_ENABLED=true` on Railway once (a) is done, then send a test email and a test reply
+- [ ] Live test with a test customer: create, reply, internal note, attachment, assign, resolve, rate, close, quality complaint, low order rating, and confirm in Odoo that the customer received no Odoo email
+- [ ] Confirm Resend passes `References`/`In-Reply-To` through unchanged (needed for reply threading)
+
+**Not migrated:** requests created in the Mongo-only version (`support_cases`) are left untouched as an archive and no longer appear on the desk. Phase 28 was still awaiting live testing, so these should only be test records; check before go-live and recreate any real one.
+
+**Definition of Done:**
+- [ ] Every request raised from the portal, an email link, staff, or a low rating appears as a ticket in Odoo Helpdesk on the right company's team, with the full conversation, notes and files in its chatter
+- [ ] No Odoo email reaches a customer at any point
+- [ ] A customer's emailed reply lands on the same ticket and reopens it; an email to the support address opens a new one
+- [ ] A reviewed product quality complaint has a matching Odoo Quality alert
+- [ ] Phase 28's own Definition of Done still holds end to end
+
+**Key files:** `backend/services/helpdesk_odoo.py`, `backend/routes/support_routes.py`, `backend/services/email_service.py` (`_support_thread`, `_support_footer`), `backend/config.py` (`support_inbound_enabled`), `backend/services/scheduler.py`, `backend/server.py`, `frontend/src/components/SupportKit.js`, `frontend/src/views/Support.js`, `frontend/src/views/PublicSupport.js`

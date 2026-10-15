@@ -18,7 +18,7 @@ import {
 } from "../components/UI";
 import {
   SupportStatusBadge, SupportPriorityBadge, CaseThread, ReplyComposer, RatingForm, StarRating,
-  AdverseEventBanner, SUPPORT_CATEGORY_LABEL, RATING_WORDS,
+  AdverseEventBanner, SUPPORT_CATEGORY_LABEL, RATING_WORDS, openSupportFile,
 } from "../components/SupportKit";
 import NewSupportCaseModal from "../components/NewSupportCaseModal";
 
@@ -26,10 +26,9 @@ const isExternalRole = (role) => role === "customer" || role === "reseller";
 
 async function openAttachment(caseId, att) {
   try {
-    const r = await api.get(`/api/support/cases/${caseId}/attachments/${att.id}`);
-    window.open(r.data.url, "_blank", "noopener,noreferrer");
+    await openSupportFile(api, `/api/support/cases/${caseId}/attachments/${att.id}`);
   } catch (e) {
-    toast.error(e.response?.data?.detail || "Could not open file");
+    toast.error("Could not open file");
   }
 }
 
@@ -664,7 +663,7 @@ function CaseDetail({ caseId, onBack }) {
             Close this request without sending the customer a resolution, for example a duplicate or a request handled another way. The customer is not emailed.
           </p>
           <FormGroup label="Internal reason">
-            <Input value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder="e.g. Duplicate of SUP-00012" />
+            <Input value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder="e.g. Duplicate of #12" />
           </FormGroup>
           <div className="flex justify-end gap-2 mt-2">
             <BtnSecondary onClick={() => setCloseOpen(false)}>Cancel</BtnSecondary>

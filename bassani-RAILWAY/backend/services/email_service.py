@@ -28,6 +28,7 @@ def _send(
     reply_to: str = None,
     attachments: list = None,
     cc: "str | list[str] | None" = None,
+    headers: "dict | None" = None,
 ) -> None:
     """Core send. Sync — always called from a BackgroundTask thread."""
     key = settings.resend_api_key
@@ -49,6 +50,8 @@ def _send(
             payload["attachments"] = attachments
         if cc:
             payload["cc"] = cc if isinstance(cc, list) else [cc]
+        if headers:
+            payload["headers"] = headers
         resend.Emails.send(payload)
     except Exception as exc:
         print(f"Email send failed [{subject}]: {exc}")
@@ -2545,6 +2548,27 @@ def _staff_case_url(case_id: str) -> str:
     return f"{settings.portal_url}/support?case={case_id}"
 
 
+def _support_thread(thread_ref: "str | None") -> dict:
+    """Send options for a customer-facing support email. thread_ref is the
+    Message-ID of the matching message on the Odoo helpdesk ticket; quoting
+    it in References/In-Reply-To lets Odoo's mail gateway file the
+    customer's emailed reply on that ticket (28.6). Replies are only invited
+    once Odoo actually receives mail for the support address."""
+    if not settings.support_inbound_enabled:
+        return {}
+    opts = {"reply_to": settings.support_email}
+    if thread_ref:
+        opts["headers"] = {"References": thread_ref, "In-Reply-To": thread_ref}
+    return opts
+
+
+def _support_footer() -> str:
+    if settings.support_inbound_enabled:
+        return ("You can reply to this email or use the link above. Either way, your "
+                "message goes straight to your request.")
+    return ""
+
+
 def send_support_case_received(
     customer_email: str,
     contact_name: str,
@@ -2553,6 +2577,7 @@ def send_support_case_received(
     category_label: str,
     case_url: str,
     cc: "list[str] | None" = None,
+    thread_ref: "str | None" = None,
 ) -> None:
     """Acknowledgement to the customer the moment a request is logged, with
     its reference number and the link to follow it up."""
@@ -2574,7 +2599,8 @@ def send_support_case_received(
              "files, or check on progress. Please keep your reference number handy if "
              "you contact us another way.", muted=True)
     )
-    _send(customer_email, f"Request Received: {case_ref}", _wrap(body), cc=cc or None)
+    _send(customer_email, f"Request Received: {case_ref}", _wrap(body, _support_footer()), cc=cc or None,
+          **_support_thread(thread_ref))
 
 
 def send_support_case_new_internal(
@@ -2629,6 +2655,7 @@ def send_support_reply_customer(
     author_name: str,
     message: str,
     case_url: str,
+    thread_ref: "str | None" = None,
 ) -> None:
     """A staff member replied on the customer's request."""
     if not customer_email:
@@ -2641,10 +2668,13 @@ def send_support_reply_customer(
         + _quote(message)
         + _button("View and reply", case_url)
         + _divider()
-        + _p("Please reply using the link above so your response stays with your request.",
+        + _p("You can reply to this email or use the link above, and your response will stay "
+             "with your request." if settings.support_inbound_enabled else
+             "Please reply using the link above so your response stays with your request.",
              muted=True)
     )
-    _send(customer_email, f"Update on Your Request: {case_ref}", _wrap(body))
+    _send(customer_email, f"Update on Your Request: {case_ref}", _wrap(body, _support_footer()),
+          **_support_thread(thread_ref))
 
 
 def send_support_reply_internal(
@@ -2698,6 +2728,7 @@ def send_support_case_resolved(
     subject: str,
     resolution_note: str,
     case_url: str,
+    thread_ref: "str | None" = None,
 ) -> None:
     """The team marked the request resolved. The customer can confirm, rate
     the outcome, or reopen it from the link."""
@@ -2716,7 +2747,8 @@ def send_support_case_resolved(
         + _p("If we do not hear back, the request will close automatically after 7 days.",
              muted=True)
     )
-    _send(customer_email, f"Request Resolved: {case_ref}", _wrap(body))
+    _send(customer_email, f"Request Resolved: {case_ref}", _wrap(body, _support_footer()),
+          **_support_thread(thread_ref))
 
 
 def send_support_sla_escalation(to: "list[str]", items: list) -> None:

@@ -28,7 +28,7 @@ from services.email_service import (
     send_discount_reminder,
     send_payment_hold_digest,
 )
-from routes.support_routes import run_support_sla_checks
+from routes.support_routes import run_support_inbound_sync, run_support_sla_checks
 from routes.recurring_order_routes import (
     generate_recurring_notices,
     expire_unaccepted_occurrences,
@@ -294,4 +294,8 @@ def start_notification_schedulers() -> None:
     # Phase 28 — support desk: escalate requests past their response target,
     # auto-close resolved requests the customer never came back to. Hourly.
     asyncio.create_task(_interval_loop("support_sla", 3600, run_support_sla_checks))
+    # 28.6 — customer emails Odoo's mail gateway filed on helpdesk tickets
+    # (new requests to the support address, and replies). No-op until Odoo
+    # receives that mail.
+    asyncio.create_task(_interval_loop("support_inbound", 300, run_support_inbound_sync))
     logger.info("notification_schedulers_started")

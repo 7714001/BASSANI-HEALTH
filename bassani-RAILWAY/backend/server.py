@@ -229,12 +229,11 @@ async def initialise_users():
     await col("tickets").create_index([("updated_at", -1)])
 
     # Phase 28 — customer support desk
-    await col("support_cases").create_index([("ref", 1)], unique=True)
-    await col("support_cases").create_index([("customer_partner_id", 1), ("updated_at", -1)])
-    await col("support_cases").create_index([("order_id", 1)])
-    await col("support_cases").create_index([("status", 1), ("waiting_on", 1)])
-    await col("support_cases").create_index([("assigned_to.id", 1)])
-    await col("support_cases").create_index([("updated_at", -1)])
+    # 28.6: support requests live in Odoo Helpdesk; this is the portal-side
+    # companion record, keyed by the Odoo ticket id.
+    await col("support_case_meta").create_index([("assigned_to.id", 1)])
+    await col("support_case_meta").create_index([("closed_at", 1)])
+    await col("support_case_meta").create_index([("resolved_at", 1)])
     await col("order_feedback").create_index([("order_id", 1)], unique=True)
     await col("order_feedback").create_index([("created_at", -1)])
 

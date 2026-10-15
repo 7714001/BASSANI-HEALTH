@@ -12,7 +12,7 @@ import { Loader2, AlertTriangle, Package, ChevronRight, CheckCircle2, LifeBuoy, 
 import api from "../api";
 import {
   CaseFormFields, EMPTY_CASE_FORM, caseFormError, appendCaseForm, CaseThread, ReplyComposer,
-  RatingForm, StarRating, SupportStatusBadge, SUPPORT_CATEGORIES, fmtWhen, RATING_WORDS,
+  RatingForm, StarRating, SupportStatusBadge, SUPPORT_CATEGORIES, fmtWhen, RATING_WORDS, openSupportFile,
 } from "../components/SupportKit";
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 bg-gray-50 focus:outline-none focus:border-bassani-600 focus:ring-2 focus:ring-bassani-600/10 placeholder-gray-400";
@@ -252,9 +252,8 @@ export function PublicCaseHelp() {
 
   const download = async (att) => {
     try {
-      const r = await api.get(`/api/public/support/case/${token}/attachments/${att.id}`);
-      window.open(r.data.url, "_blank", "noopener,noreferrer");
-    } catch (e) { setActionError(errMsg(e, "Could not open that file.")); }
+      await openSupportFile(api, `/api/public/support/case/${token}/attachments/${att.id}`);
+    } catch (e) { setActionError("Could not open that file."); }
   };
   const reply = async ({ body, files }) => {
     setActionError(null);

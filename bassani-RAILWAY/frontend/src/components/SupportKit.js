@@ -8,6 +8,17 @@
 import { useRef, useState } from "react";
 import { Paperclip, X, Star, Loader2, Lock, Download, AlertTriangle, Send } from "lucide-react";
 
+// Support attachments are stored on the Odoo helpdesk ticket and streamed by
+// the backend (28.6), so they're fetched as a blob rather than opened from a
+// presigned storage URL.
+export async function openSupportFile(api, url) {
+  const r = await api.get(url, { responseType: "blob" });
+  const href = URL.createObjectURL(r.data);
+  window.open(href, "_blank", "noopener,noreferrer");
+  setTimeout(() => URL.revokeObjectURL(href), 60000);
+}
+
+
 // ── Labels / colours (mirror backend/routes/support_routes.py) ───────────────
 export const SUPPORT_CATEGORIES = [
   { key: "order",           label: "Order or delivery",     hint: "Missing or wrong items, delivery or collection questions" },

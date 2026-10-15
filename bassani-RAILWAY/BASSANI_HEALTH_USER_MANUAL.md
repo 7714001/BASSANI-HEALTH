@@ -2545,12 +2545,14 @@ Either way, the order exists the moment either button is clicked — cancelling 
 
 ## Customer Support Desk
 
-The Support Desk is where every customer query, complaint and piece of order feedback is handled, whichever way it arrives. Every request gets a reference number (for example **SUP-00042**), an owner, a status, a response target, and a full history.
+The Support Desk is where every customer query, complaint and piece of order feedback is handled, whichever way it arrives. Every request gets a reference number (for example **#42**), an owner, a status, a response target, and a full history.
+
+Requests are stored in Odoo's Helpdesk app, so anyone with Odoo access can also see each request, its full conversation and internal notes, and, for product quality complaints, the matching Quality alert. Work them in the portal as normal: assigning, replying and resolving all happen here, and customers are only ever emailed by the portal, never by Odoo.
 
 ### How customers raise a request
 
 - **Customers with a portal login** use **Help & Support** in their menu, the **Need Help?** card on any order's page, or the **Query** button next to an invoice. The order or invoice is linked automatically.
-- **Customers without a portal login** don't need one. Every pro-forma, invoice and "ready for collection" email they receive, and the "How did we do?" email we send after an order is complete, carries a secure link to that order's help page. From there they can raise a query or complaint (with photos or documents), see requests already raised on that order, and rate the order once collected. Every reply we send them includes a link back to their request, so they can follow up without logging in.
+- **Customers without a portal login** don't need one. Every pro-forma, invoice and "ready for collection" email they receive, and the "How did we do?" email we send after an order is complete, carries a secure link to that order's help page. From there they can raise a query or complaint (with photos or documents), see requests already raised on that order, and rate the order once collected. Every reply we send them includes a link back to their request, so they can follow up without logging in. Once email replies are switched on, they can also simply reply to any support email and their reply is added to the request.
 - **Staff** can log a request on a customer's behalf (phone call, walk-in, or an email that came in elsewhere) with **Log Request** on the Support Desk, or **Log request** on an order's page. Tick "Email the customer an acknowledgement" so they get their reference and link.
 
 ### Request types and who handles them
