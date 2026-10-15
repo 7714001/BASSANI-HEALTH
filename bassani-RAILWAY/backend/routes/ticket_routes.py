@@ -249,6 +249,12 @@ class TicketDepositRegister(BaseModel):
     # unallocated account.move.line) to the deposit invoice instead of
     # recording a new payment.
     use_credit_line_id: Optional[int] = None
+    # 2026-10-15 — Record Additional Deposit: a further deposit on an order
+    # whose deposit is already registered (e.g. a R1 placeholder, then the real
+    # deposit), before the final invoice exists. Recorded like a pay-before-
+    # collection advance payment: another paid down-payment invoice that the
+    # final invoice deducts. Never touches the deposit gate.
+    additional: bool = False
     # 8.72 — must be True to record a NEW payment when the customer already
     # has unallocated payments that could be applied instead.
     confirm_new_payment: bool = False
@@ -2868,7 +2874,10 @@ async def register_deposit(
     # Odoo deducts on the final invoice and which is VAT-correct, since SA
     # time of supply is triggered by receiving payment). More than one is
     # allowed. Once the final invoice exists, Register Payment pays that.
-    is_advance = ticket.get("payment_arrangement") == "pay_before_collection"
+    is_additional = bool(body.additional) and ticket.get("payment_arrangement") != "pay_before_collection"
+    if is_additional and not ticket.get("payment_confirmed_at"):
+        raise HTTPException(status_code=400, detail="No deposit is registered on this order yet. Use Register Deposit.")
+    is_advance = ticket.get("payment_arrangement") == "pay_before_collection" or is_additional
     if is_advance:
         if await col("packing_board").find_one({"order_id": str(ticket["order_id"]), "invoice_id": {"$nin": [None, False]}}):
             raise HTTPException(
@@ -3130,13 +3139,14 @@ async def register_deposit(
                     "status": ticket["status"], "exit_status": None,
                     "actor_id": current_user["id"], "actor_name": _actor(current_user),
                     "at": now,
-                    "note": body.note or (f"Payment received before invoicing: R{pay_amount:,.2f}"
+                    "note": body.note or ((f"Additional deposit recorded: R{pay_amount:,.2f}" if is_additional
+                                           else f"Payment received before invoicing: R{pay_amount:,.2f}")
                                           + (f" (applied existing payment {_use_credit['reference']})" if _use_credit else "")),
                 }},
             },
         )
         await audit_log(
-            "ticket.register_advance_payment", "ticket", ticket_id,
+            "ticket.register_additional_deposit" if is_additional else "ticket.register_advance_payment", "ticket", ticket_id,
             entity_label=ticket.get("customer_name", ""), user=current_user,
             detail={"invoice_type": invoice_type, "amount": pay_amount, "journal_id": body.journal_id,
                     "invoice_id": invoice_id, "date": body.date,

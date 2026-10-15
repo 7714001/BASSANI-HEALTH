@@ -1636,8 +1636,12 @@ export default function SalesTickets() {
   // until the data actually lands.
   const openDepositModal = (mode) => {
     // Called straight from onClick too, so `mode` may be a click event.
-    const isAdvanceMode = mode === "advance";
-    setDepositMode(isAdvanceMode ? "advance" : "deposit");
+    // "additional" (2026-10-15): a further deposit after the first one is
+    // registered and before the final invoice exists (e.g. a R1 placeholder,
+    // then the real deposit). Same backend path as an advance payment.
+    const isAdditionalMode = mode === "additional";
+    const isAdvanceMode = mode === "advance" || isAdditionalMode;
+    setDepositMode(isAdditionalMode ? "additional" : isAdvanceMode ? "advance" : "deposit");
     const today = new Date().toISOString().split("T")[0];
     setDepositForm({ invoice_type: "fixed", amount: "", percentage: "50", date: today, journal_id: "", note: "" });
     setExistingInvoices([]);
@@ -1667,7 +1671,9 @@ export default function SalesTickets() {
         const owing = Math.max(0, orderTotal - paidSoFar);
         setDepositForm(f => ({
           ...f,
-          amount:     isAdvanceMode ? (owing ? owing.toFixed(2) : "") : (orderTotal ? (orderTotal / 2).toFixed(2) : ""),
+          amount:     isAdditionalMode
+            ? (() => { const rest = Math.min(owing, Math.max(0, orderTotal / 2 - paidSoFar)); return rest > 0.005 ? rest.toFixed(2) : ""; })()
+            : isAdvanceMode ? (owing ? owing.toFixed(2) : "") : (orderTotal ? (orderTotal / 2).toFixed(2) : ""),
           journal_id: journals[0]?.id ? String(journals[0].id) : "",
         }));
         setExistingInvoices(existingRes.data.invoices || []);
@@ -1734,7 +1740,8 @@ export default function SalesTickets() {
     const tid = detail.id;
     const body = { invoice_type, date, journal_id: parseInt(journal_id), note: depositForm.note || undefined,
                    small_deposit_reason: depositIsSmall ? smallDepositReason.trim() : undefined,
-                   confirm_new_payment: paymentCredits.length > 0 && confirmNewPayment };
+                   confirm_new_payment: paymentCredits.length > 0 && confirmNewPayment,
+                   additional: depositMode === "additional" || undefined };
     if (invoice_type === "fixed")      body.amount     = parseFloat(amount);
     if (invoice_type === "percentage") body.percentage = parseFloat(percentage);
     try {
@@ -1742,7 +1749,9 @@ export default function SalesTickets() {
       if (data.warning) {
         toast(data.warning, { icon: "⚠️", duration: 10000 });
       } else if (data.advance_payment) {
-        toast.success("Payment recorded. It will be deducted from the final invoice.");
+        toast.success(depositMode === "additional"
+          ? "Additional deposit recorded. The final invoice will deduct it."
+          : "Payment recorded. It will be deducted from the final invoice.");
       } else {
         toast.success("Deposit registered — order queued for packing");
       }
@@ -1758,7 +1767,7 @@ export default function SalesTickets() {
   const applyCreditToDeposit = async (c) => {
     const owingCap = depositOrderTotal > 0 ? depositOrderTotal : Number(c.amount);
     const amount = Math.min(Number(c.amount), owingCap);
-    const small = depositMode !== "advance" && depositOrderTotal > 0 && amount < depositOrderTotal * 0.10;
+    const small = depositMode === "deposit" && depositOrderTotal > 0 && amount < depositOrderTotal * 0.10;
     if (small && !smallDepositReason.trim()) {
       setDepositForm(f => ({ ...f, invoice_type: "fixed", amount: amount.toFixed(2) }));
       return toast.error("That payment is under 10% of the order. Give a reason for the small deposit, then click Use as deposit again.");
@@ -1770,9 +1779,10 @@ export default function SalesTickets() {
         invoice_type: "fixed", amount, date: c.date || depositForm.date, use_credit_line_id: c.line_id,
         note: depositForm.note || undefined,
         small_deposit_reason: small ? smallDepositReason.trim() : undefined,
+        additional: depositMode === "additional" || undefined,
       });
       if (data.warning) toast(data.warning, { icon: "⚠️", duration: 10000 });
-      else toast.success(`${c.reference} applied as the ${depositMode === "advance" ? "payment" : "deposit"}.`);
+      else toast.success(`${c.reference} applied as the ${depositMode === "advance" ? "payment" : depositMode === "additional" ? "additional deposit" : "deposit"}.`);
       setDepositModal(false);
       refreshDetail(tid);
     } catch (e) { toast.error(errorText(e, "Could not apply the payment")); }
@@ -1797,7 +1807,7 @@ export default function SalesTickets() {
   const depositAmountEntered = depositForm.invoice_type === "fixed"
     ? parseFloat(depositForm.amount || 0)
     : depositOrderTotal * parseFloat(depositForm.percentage || 0) / 100;
-  const depositIsSmall = depositMode !== "advance" && depositOrderTotal > 0 && depositAmountEntered > 0
+  const depositIsSmall = depositMode === "deposit" && depositOrderTotal > 0 && depositAmountEntered > 0
     && depositAmountEntered < depositOrderTotal * 0.10;
 
   // 8.71 — release on account requests
@@ -2056,6 +2066,12 @@ export default function SalesTickets() {
   // A payment that arrives on a pay-before-collection order before its final
   // invoice exists (Mark Complete) is recorded like a deposit.
   const canRecordAdvance  = isPbc && !hasFinalInvoice && detailOutstanding > 0.005 && canFinance && !detail?.exit_status;
+  // A further deposit on a deposit order (2026-10-15): the first deposit is
+  // registered, the final invoice isn't raised yet (e.g. a R1 placeholder,
+  // then the real deposit). Once the final invoice exists, Register Balance
+  // Payment pays that instead.
+  const canRecordAdditional = !isPbc && !isOnAccount && !detail?.is_sample && !!detail?.payment_confirmed_at
+    && !hasFinalInvoice && detailOutstanding > 0.005 && canFinance && !detail?.exit_status;
   // Anyone holding the release permission can release at the deposit stage.
   // A customer with account terms on record opens the 8.68 release window; one
   // without opens the same window Finance uses for requests (approve terms and
@@ -2237,6 +2253,7 @@ export default function SalesTickets() {
   const showReleaseBtn        = showReleaseOption && !inHero("releaseOnAccount");
   const showPbcBtn            = canApprovePbc && !inHero("payBeforeCollection");
   const showRecordAdvanceBtn  = canRecordAdvance && !inHero("recordAdvance");
+  const showRecordAdditionalBtn = canRecordAdditional;
   // Shown under the Next Step waiting text when nothing else is actionable;
   // otherwise (e.g. the user can also register deposits) in the Actions card.
   const showRequestReleaseBtn = canRequestRelease && !!nextAction;
@@ -2268,7 +2285,7 @@ export default function SalesTickets() {
   const showPartialDecision = !isReseller && !detail?.exit_status && (can("tickets.sales") || can("tickets.manage"))
     && (orderIsShort || !!detail?.partial_decision);
   const showOrderGroup     = showEditQuote || showSendQuote || showConfirmOrderBtn || showMakeRecurring || showCancelQuote || showLinkOrder || showNotInterested || showRequestDiscount || showPartialDecision;
-  const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showPbcBtn || showRecordAdvanceBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
+  const showPaymentGroup   = showRegisterDeposit || showReleaseBtn || showPbcBtn || showRecordAdvanceBtn || showRecordAdditionalBtn || showRequestReleaseBtn || showReviewReleaseBtn || showConfirmPaymentBtn || showRegisterBalance || showMarkPopReviewed;
   const showDocumentsGroup = showInvoiceActions; // Send/Resend Invoice, Reset to Draft, Raise Credit Note
 
   // ── Quote totals ──────────────────────────────────────────────────────────
@@ -3679,6 +3696,11 @@ export default function SalesTickets() {
                             <Wallet size={14} className="text-indigo-500 shrink-0" />Record Payment
                           </button>
                         )}
+                        {showRecordAdditionalBtn && (
+                          <button onClick={() => openDepositModal("additional")} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors text-left">
+                            <Wallet size={14} className="text-indigo-500 shrink-0" />Record Additional Deposit
+                          </button>
+                        )}
                         {showReviewReleaseBtn && (
                           <button onClick={openDecide} className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors text-left">
                             <CreditCard size={14} className="text-teal-500 shrink-0" />Review No-Deposit Request
@@ -4289,16 +4311,18 @@ export default function SalesTickets() {
 
         {/* 8.47 — Deposit registration modal */}
         {depositModal && (
-          <Modal title={depositMode === "advance" ? "Record Payment" : "Register Deposit"} onClose={() => setDepositModal(false)}>
+          <Modal title={depositMode === "advance" ? "Record Payment" : depositMode === "additional" ? "Record Additional Deposit" : "Register Deposit"} onClose={() => setDepositModal(false)}>
             <p className="text-xs text-gray-500 mb-4">
-              {depositMode === "advance"
+              {depositMode === "additional"
+                ? "A deposit is already registered on this order and it hasn't been invoiced yet. This records a further deposit (for example the real deposit after a R1 placeholder) as another paid deposit invoice in Odoo. The final invoice deducts every deposit when the order is marked complete. The existing deposit invoice is left exactly as it is."
+                : depositMode === "advance"
                 ? "This order is to be paid before collection and hasn't been invoiced yet. Recording the payment now creates a paid advance invoice in Odoo, which is deducted from the final invoice when the order is marked complete. If the full amount is paid, the customer is told the order is ready as soon as it's packed and signed off."
                 : "Creates an invoice in Odoo and registers payment against it. The order moves onto the packing board once this succeeds."}
             </p>
             {/* An approved account customer was sent the no-deposit
                 confirmation at confirm time — if this order needs a deposit
                 after all, they need the deposit pro-forma first. */}
-            {depositMode !== "advance" && releaseCheck?.terms?.status === "approved" && (
+            {depositMode === "deposit" && releaseCheck?.terms?.status === "approved" && (
               <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 flex items-start justify-between gap-3">
                 <p className="text-xs text-blue-800">
                   This customer has account terms, so they were told no deposit is needed.
@@ -4361,8 +4385,8 @@ export default function SalesTickets() {
             )}
             <UnallocatedPaymentsPanel credits={paymentCredits} onApply={applyCreditToDeposit} applyingId={applyingCreditId}
               confirmNew={confirmNewPayment} onConfirmNew={setConfirmNewPayment} busy={depositSaving}
-              applyLabel={depositMode === "advance" ? "Use this payment" : "Use as deposit"} />
-            <FormGroup label={depositMode === "advance" ? "Amount type" : "Invoice Type"} required>
+              applyLabel={depositMode === "deposit" ? "Use as deposit" : depositMode === "additional" ? "Use as additional deposit" : "Use this payment"} />
+            <FormGroup label={depositMode === "deposit" ? "Invoice Type" : "Amount type"} required>
               <div className="space-y-2">
                 {[
                   { value: "fixed",     label: "Fixed Amount",       desc: "Down payment for a specific amount — use the full order total here if the customer paid in full upfront" },
@@ -4436,7 +4460,7 @@ export default function SalesTickets() {
               <BtnSecondary onClick={() => setDepositModal(false)} disabled={depositSaving}>Cancel</BtnSecondary>
               <BtnPrimary onClick={registerDeposit} disabled={depositSaving || depositDetailsLoading || (paymentCredits.length > 0 && !confirmNewPayment)}>
                 {depositSaving ? <Loader2 size={13} className="animate-spin mr-1.5" /> : null}
-                {depositMode === "advance" ? "Record Payment" : "Register in Odoo"}
+                {depositMode === "advance" ? "Record Payment" : depositMode === "additional" ? "Record Additional Deposit" : "Register in Odoo"}
               </BtnPrimary>
             </div>
           </Modal>

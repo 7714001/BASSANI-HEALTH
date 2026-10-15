@@ -1138,6 +1138,8 @@ If you hold the release permission yourself, you don't need a request: click **R
 
 **Small deposits:** if you register a deposit under 10% of the order total, the window warns you and asks for a reason. Token deposits create extra invoices; use pay before collection, or Request No Deposit, instead.
 
+**Record Additional Deposit:** if a deposit is already registered (for example a R1 placeholder) and the customer then pays more before the order is marked complete, open the Sales ticket and click **Record Additional Deposit** under Payment. It records the payment as another paid deposit invoice; the final invoice deducts every deposit when the order is marked complete. Never reset or edit the first deposit invoice to change its amount. Once the final invoice exists, use **Register Balance Payment** instead: the payment goes against the final invoice and it shows as partly paid, which is correct.
+
 **If an account customer should pay a deposit on this order after all,** choose **Register Deposit** as normal. Because they were told no deposit was needed, the window offers **Send Deposit Pro-Forma** so they receive the deposit-due email first.
 
 ### Pay Before Collection (2026-10-12)
@@ -1280,6 +1282,8 @@ The Operations Monitor is a live, read-only display designed to run on a dedicat
 The display refreshes automatically every 30 seconds. Every monitor display shares this one Settings tab, each with its own independent URL and token (2026-08-22).
 
 **Rotating the token:** If the display URL is compromised or you want to revoke access to a specific device, click **Rotate token** on the Operations Monitor card in Settings → Monitor Displays. The old URL stops working immediately. Copy the new URL and update all display devices.
+
+**Export to Excel (2026-10-15):** the download icon in the top-right of the Operations Monitor saves what the board is showing right now as an Excel file: a Board sheet with one row per order card (stage, order, customer, value, how long it's been waiting, who it's with, and backorder/production flags) and a Summary sheet with the figures across the top and each column's count and value.
 
 ### Reading the Monitor
 

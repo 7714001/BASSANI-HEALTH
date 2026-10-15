@@ -12,7 +12,7 @@
 // and three independent copies of theme logic is exactly the kind of thing
 // that silently drifts. See CLAUDE.md's Phase 23.6 entry.
 import { useCallback, useEffect, useState } from "react";
-import { Sun, Moon, Maximize, Minimize, CheckCircle2, AlertTriangle, AlertCircle, AlertOctagon } from "lucide-react";
+import { Sun, Moon, Maximize, Minimize, CheckCircle2, AlertTriangle, AlertCircle, AlertOctagon, Download } from "lucide-react";
 
 // ── Theme persistence ───────────────────────────────────────────────────────
 
@@ -447,7 +447,24 @@ export function ConnectionBadge({ connected, theme }) {
   );
 }
 
-export function MonitorHeaderBar({ theme, onToggleTheme, title, lastUpdatedStr, connected }) {
+/** Header icon button that downloads something (e.g. an Excel export). */
+export function ExportButton({ theme, onClick, title = "Export to Excel" }) {
+  const t = THEME[theme];
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={iconButtonStyle(t)}
+      onMouseEnter={e => { e.currentTarget.style.background = t.hoverBg; e.currentTarget.style.color = t.textPrimary; }}
+      onMouseLeave={e => { e.currentTarget.style.background = t.surfaceAlt; e.currentTarget.style.color = t.textSecondary; }}
+    >
+      <Download size={15} />
+    </button>
+  );
+}
+
+// `actions` (optional): extra header buttons, shown before the theme toggle.
+export function MonitorHeaderBar({ theme, onToggleTheme, title, lastUpdatedStr, connected, actions }) {
   const t = THEME[theme];
   return (
     <div style={{
@@ -470,6 +487,7 @@ export function MonitorHeaderBar({ theme, onToggleTheme, title, lastUpdatedStr, 
         <span style={{ fontSize: 12, color: t.textMuted }}>Updated {lastUpdatedStr}</span>
         <ConnectionBadge connected={connected} theme={theme} />
         <div style={{ width: 1, height: 22, background: t.headerBorder }} />
+        {actions}
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         <FullscreenToggle theme={theme} />
       </div>

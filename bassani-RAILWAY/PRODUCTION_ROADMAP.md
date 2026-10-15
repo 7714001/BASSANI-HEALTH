@@ -2683,6 +2683,11 @@ For backorders: each delivery goes through its own packing → QA/RP → Mark Co
 - [ ] Live test: an apply from each window (deposit, balance, invoice) and a confirmed new payment
 - [ ] Clean-up: Finance works through the 53 likely double-recorded orders against the bank (list exported 2026-10-14)
 
+**8.72c — Record Additional Deposit (2026-10-15).** Found live: a R1 placeholder deposit, then the customer paid the real deposit before the order was invoiced. Register Deposit refused a second deposit and Register Balance Payment had no invoice to pay, so Finance wanted to reset the R1 deposit invoice and edit its amount (which unhooks the payment, risks the final invoice's deduction disagreeing with the deposit, and edits an issued tax invoice).
+- [x] `register-deposit` takes `additional: true` on a deposit order whose deposit is registered and with no final invoice yet: recorded through the same path as a pay-before-collection advance payment (another paid down-payment invoice, capped at what's owing, added to `deposit_invoice_ids`, deposit gate untouched, no 10% guard), audited `ticket.register_additional_deposit`, Activity Log note
+- [x] Sales ticket: **Record Additional Deposit** in the Payment actions (Finance), pre-filled with what's left of the 50%; existing unallocated payments offered first (8.72)
+- [ ] Live test: R1 deposit, then an additional deposit, Mark Complete, and the final invoice deducts both
+
 **8.72b — Already-fulfilled orders (2026-10-14).** Found live the same day: 8.69d's Expected Payments moved old portal tickets (orders confirmed, delivered and paid entirely in Odoo) to Awaiting Deposit and offered Link Invoice on them; Finance linked many, which queued them on the packing board. No Odoo records were created (read-only check: no deposit invoice since 6 Oct was on an already-delivered order), but running them through packing would record false packing and QA/RP sign-offs and could email customers who collected weeks ago.
 - [x] `order_routes.order_fulfilment_state()` (batched: an order is delivered when it has outgoing deliveries and all are done; plus what's owing on its posted invoices). Live-verified read-only (S00780, S01205 delivered and paid; S00781, S01206, S01219 open)
 - [x] Guard: `_queue_packing_board` refuses a fully delivered order (`FULLY_DELIVERED_MSG`), and `register-deposit` / `use-existing-invoice` refuse up front; the reconciliation wizard's retroactive packing step is exempt (`allow_delivered`)
@@ -5879,6 +5884,13 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 - [x] `MonitorKit.js`'s shared `Column` component gains an optional `valueTotal` prop, rendered as a small line under the column heading (`"R123k tied up here"`, via the existing `fmtR()` formatter) — optional so Manufacturing/Onboarding monitors (which don't pass it) are visually unchanged
 - [x] `OrderMonitor.js` passes `valueTotal={column_totals?.[cfg.key]}` per column
 - [x] KPI strip rebuilt as two audience-scoped rows (round 2): **Row 1 (`KpiCard`, "needs action" — sales clerks/ops)** Overdue, At Risk, Backorders, In Production — the last two promoted here from the old Row 2 since they're the one thing there that was still real ops signal, not a duplicate column count. **Row 2 (`KpiSmall`, "business health" — CFO/exco)** Pipeline Value, Revenue at Risk, Completed Today (count · rand, combined in one tile), Compliance Hold, Oldest Active
+
+
+### 23.9 — Operations Monitor Excel Export — Built 2026-10-15
+
+- [x] Export button in the Operations Monitor header (`MonitorKit.js` `ExportButton`, shown through `MonitorHeaderBar`'s new optional `actions` slot, so the other monitors are unaffected)
+- [x] Built in the browser from the data already on the board (no new endpoint): a Board sheet with one row per card (stage, order, customer, sales agent, value, units, waiting since/hours, deadline, age, assignee, packer, warehouse, backorder/in production/sample flags) and a Summary sheet (the KPIs and each column's count and value)
+- [ ] Live check: export from the TV board and a laptop
 
 ### Definition of Done
 - [x] Every column heading on `/monitor` shows its own revenue total, updating live on every 30s poll / WebSocket-triggered refresh, same as card counts already do

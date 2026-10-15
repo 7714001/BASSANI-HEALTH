@@ -11,7 +11,7 @@ import {
   useMonitorTheme, THEME, pageContainerStyle, resolveHeaderColor, getTiers,
   fmtR, fmtHours, AgeBadge, KpiCard, KpiSmall, Column, CardGroupBox,
   OrderGroupHeader, groupCardsByOrder, MonitorHeaderBar, MonitorLoadingScreen,
-  MonitorInvalidTokenScreen, GlobalMonitorStyles,
+  MonitorInvalidTokenScreen, GlobalMonitorStyles, ExportButton,
 } from "../components/MonitorKit";
 
 const POLL_MS = 30_000;
@@ -223,6 +223,67 @@ export default function OrderMonitor() {
 
   const t = THEME[theme];
   const { kpis, columns, column_totals } = data;
+
+  // Excel export (2026-10-15) of exactly what the board shows: one row per
+  // card, plus a summary of the KPIs and each column's count and value.
+  // Built in the browser from the data already loaded; no extra request.
+  const exportExcel = async () => {
+    const XLSX = await import("xlsx");
+    const stamp = new Date();
+    const hrs = v => (v == null ? "" : Math.round(Number(v) * 10) / 10);
+    const yesNo = v => (v ? "Yes" : "");
+    const TIER = { ok: "On track", warning: "Watch", urgent: "At risk", overdue: "Overdue" };
+    const rows = [];
+    COLUMNS.forEach(cfg => {
+      (columns[cfg.key] || []).forEach(c => rows.push({
+        "Stage": cfg.label,
+        "Order": c.so_ref || "",
+        "Customer": c.customer_name || "",
+        "Sales agent": c.reseller_name || "",
+        "Order value (R)": c.order_value ?? "",
+        "Units": c.total_units ?? "",
+        "Waiting since": c.clock_start ? new Date(c.clock_start).toLocaleString("en-ZA") : "",
+        "Hours waiting": hrs(c.hours_elapsed),
+        "Deadline (hours)": c.deadline_hours ?? "",
+        "Age": TIER[c.age_tier] || c.age_tier || "",
+        "Assigned to": c.assigned_name || "",
+        "Packer": c.packer_name || "",
+        "Warehouse": c.warehouse_name || "",
+        "Backorder": yesNo(c.has_backorder),
+        "In production": yesNo(c.has_mo_pending),
+        "Sample": yesNo(c.is_sample),
+      }));
+    });
+    const summary = [
+      { "Measure": "Exported", "Value": stamp.toLocaleString("en-ZA") },
+      { "Measure": "Overdue", "Value": kpis.overdue },
+      { "Measure": "At risk", "Value": kpis.at_risk },
+      { "Measure": "Backorders", "Value": kpis.backorders },
+      { "Measure": "In production", "Value": kpis.in_production },
+      { "Measure": "Pipeline value (R)", "Value": kpis.pipeline_value },
+      { "Measure": "Revenue at risk (R)", "Value": kpis.revenue_at_risk },
+      { "Measure": "Completed today", "Value": kpis.completed_today },
+      { "Measure": "Completed today value (R)", "Value": kpis.completed_today_value },
+      { "Measure": "Compliance hold", "Value": kpis.compliance_hold },
+      { "Measure": "Oldest active (hours)", "Value": hrs(kpis.oldest_hours) },
+      {},
+      ...COLUMNS.map(cfg => ({
+        "Measure": `${cfg.label}: orders`, "Value": (columns[cfg.key] || []).length,
+      })),
+      ...COLUMNS.map(cfg => ({
+        "Measure": `${cfg.label}: value (R)`, "Value": column_totals?.[cfg.key] ?? "",
+      })),
+    ];
+    const wb = XLSX.utils.book_new();
+    const board = XLSX.utils.json_to_sheet(rows);
+    board["!cols"] = [16, 12, 30, 22, 14, 8, 20, 12, 14, 10, 20, 18, 22, 10, 12, 8].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, board, "Board");
+    const sum = XLSX.utils.json_to_sheet(summary);
+    sum["!cols"] = [{ wch: 34 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, sum, "Summary");
+    const pad = n => String(n).padStart(2, "0");
+    XLSX.writeFile(wb, `Operations Monitor ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}${pad(stamp.getMinutes())}.xlsx`);
+  };
   const lastUpdatedStr = lastUpdated
     ? lastUpdated.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—";
@@ -237,6 +298,7 @@ export default function OrderMonitor() {
         title="Operations Monitor"
         lastUpdatedStr={lastUpdatedStr}
         connected={connected}
+        actions={<ExportButton theme={theme} onClick={exportExcel} title="Export the board to Excel" />}
       />
 
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
