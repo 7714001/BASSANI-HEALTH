@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../api";
+import toast from "react-hot-toast";
 import {
   useMonitorTheme, THEME, pageContainerStyle, resolveHeaderColor, getTiers,
   fmtR, fmtHours, AgeBadge, KpiCard, KpiSmall, Column, CardGroupBox,
@@ -187,6 +188,7 @@ export default function OrderMonitor() {
   // WebSocket — push refresh from server on any pipeline state change
   const wsRef        = useRef(null);
   const reconnectRef = useRef(null);
+  const exportingRef = useRef(false);
   useEffect(() => {
     if (!valid || !token) return;
     let delay = 1000;
@@ -224,65 +226,102 @@ export default function OrderMonitor() {
   const t = THEME[theme];
   const { kpis, columns, column_totals } = data;
 
-  // Excel export (2026-10-15) of exactly what the board shows: one row per
-  // card, plus a summary of the KPIs and each column's count and value.
-  // Built in the browser from the data already loaded; no extra request.
+  // Excel export (23.9, 2026-10-15). Rows come from /api/monitor/export, the
+  // same cards as the board plus the sale order number, value excl. VAT and
+  // units read from Odoo only on click. Requested columns first, then extras.
   const exportExcel = async () => {
-    const XLSX = await import("xlsx");
-    const stamp = new Date();
-    const hrs = v => (v == null ? "" : Math.round(Number(v) * 10) / 10);
-    const yesNo = v => (v ? "Yes" : "");
-    const TIER = { ok: "On track", warning: "Watch", urgent: "At risk", overdue: "Overdue" };
-    const rows = [];
-    COLUMNS.forEach(cfg => {
-      (columns[cfg.key] || []).forEach(c => rows.push({
-        "Stage": cfg.label,
-        "Order": c.so_ref || "",
-        "Customer": c.customer_name || "",
-        "Sales agent": c.reseller_name || "",
-        "Order value (R)": c.order_value ?? "",
-        "Units": c.total_units ?? "",
-        "Waiting since": c.clock_start ? new Date(c.clock_start).toLocaleString("en-ZA") : "",
-        "Hours waiting": hrs(c.hours_elapsed),
-        "Deadline (hours)": c.deadline_hours ?? "",
-        "Age": TIER[c.age_tier] || c.age_tier || "",
-        "Assigned to": c.assigned_name || "",
-        "Packer": c.packer_name || "",
-        "Warehouse": c.warehouse_name || "",
-        "Backorder": yesNo(c.has_backorder),
-        "In production": yesNo(c.has_mo_pending),
-        "Sample": yesNo(c.is_sample),
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    const busy = toast.loading("Preparing export…");
+    try {
+      const [{ data: ex }, XLSX] = await Promise.all([
+        api.get(`/api/monitor/export?token=${encodeURIComponent(token)}`),
+        import("xlsx"),
+      ]);
+      const stamp = new Date();
+      const hrs = v => (v == null ? "" : Math.round(Number(v) * 10) / 10);
+      const yesNo = v => (v ? "Yes" : "");
+      const num = v => (v == null ? "" : v);
+      const TIER = { ok: "On track", warning: "Watch", urgent: "At risk", overdue: "Overdue" };
+      const fmtDate = v => (v ? new Date(v).toLocaleString("en-ZA") : "");
+      const rows = ex.rows.map(r => ({
+        "Sale Order": r.sale_order || "",
+        "Customer": r.customer_name,
+        "Status": r.status,
+        "Created By": r.created_by,
+        "Units to Pack": num(r.units),
+        "Order Value excl. VAT (R)": num(r.value_excl_vat),
+        "VAT (R)": num(r.vat),
+        "Order Value incl. VAT (R)": num(r.value_incl_vat),
+        "Order Date": fmtDate(r.order_date),
+        "Sales Agent": r.sales_agent,
+        "Assigned To": r.assigned_to,
+        "Packer": r.packer,
+        "Warehouse": r.warehouse,
+        "In Stage Since": fmtDate(r.waiting_since),
+        "Hours in Stage": hrs(r.hours_waiting),
+        "Target (hours)": num(r.deadline_hours),
+        "Age": TIER[r.age_tier] || r.age_tier || "",
+        "Backorder": yesNo(r.backorder),
+        "In Production": yesNo(r.in_production),
+        "Sample": yesNo(r.sample),
       }));
-    });
-    const summary = [
-      { "Measure": "Exported", "Value": stamp.toLocaleString("en-ZA") },
-      { "Measure": "Overdue", "Value": kpis.overdue },
-      { "Measure": "At risk", "Value": kpis.at_risk },
-      { "Measure": "Backorders", "Value": kpis.backorders },
-      { "Measure": "In production", "Value": kpis.in_production },
-      { "Measure": "Pipeline value (R)", "Value": kpis.pipeline_value },
-      { "Measure": "Revenue at risk (R)", "Value": kpis.revenue_at_risk },
-      { "Measure": "Completed today", "Value": kpis.completed_today },
-      { "Measure": "Completed today value (R)", "Value": kpis.completed_today_value },
-      { "Measure": "Compliance hold", "Value": kpis.compliance_hold },
-      { "Measure": "Oldest active (hours)", "Value": hrs(kpis.oldest_hours) },
-      {},
-      ...COLUMNS.map(cfg => ({
-        "Measure": `${cfg.label}: orders`, "Value": (columns[cfg.key] || []).length,
-      })),
-      ...COLUMNS.map(cfg => ({
-        "Measure": `${cfg.label}: value (R)`, "Value": column_totals?.[cfg.key] ?? "",
-      })),
-    ];
-    const wb = XLSX.utils.book_new();
-    const board = XLSX.utils.json_to_sheet(rows);
-    board["!cols"] = [16, 12, 30, 22, 14, 8, 20, 12, 14, 10, 20, 18, 22, 10, 12, 8].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, board, "Board");
-    const sum = XLSX.utils.json_to_sheet(summary);
-    sum["!cols"] = [{ wch: 34 }, { wch: 22 }];
-    XLSX.utils.book_append_sheet(wb, sum, "Summary");
-    const pad = n => String(n).padStart(2, "0");
-    XLSX.writeFile(wb, `Operations Monitor ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}${pad(stamp.getMinutes())}.xlsx`);
+      const sumOf = k => Math.round(ex.rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) * 100) / 100;
+      rows.push({});
+      rows.push({
+        "Sale Order": "TOTAL",
+        "Customer": `${ex.rows.length} orders`,
+        "Units to Pack": sumOf("units"),
+        "Order Value excl. VAT (R)": sumOf("value_excl_vat"),
+        "VAT (R)": sumOf("vat"),
+        "Order Value incl. VAT (R)": sumOf("value_incl_vat"),
+      });
+
+      const k = ex.kpis;
+      const stageRows = COLUMNS.map(cfg => {
+        const inStage = ex.rows.filter(r => r.stage_key === cfg.key);
+        return {
+          "Measure": cfg.label,
+          "Orders": inStage.length,
+          "Units": Math.round(inStage.reduce((a, r) => a + (Number(r.units) || 0), 0) * 100) / 100,
+          "Value excl. VAT (R)": Math.round(inStage.reduce((a, r) => a + (Number(r.value_excl_vat) || 0), 0) * 100) / 100,
+          "Overdue": inStage.filter(r => r.age_tier === "overdue").length,
+        };
+      });
+      const summary = [
+        { "Measure": "Exported", "Orders": stamp.toLocaleString("en-ZA") },
+        ...(ex.odoo_unavailable ? [{ "Measure": "Note", "Orders": "Order values and units could not be read; try again shortly" }] : []),
+        {},
+        ...stageRows,
+        {},
+        { "Measure": "Overdue", "Orders": k.overdue },
+        { "Measure": "At risk", "Orders": k.at_risk },
+        { "Measure": "Backorders", "Orders": k.backorders },
+        { "Measure": "In production", "Orders": k.in_production },
+        { "Measure": "Compliance hold (QA + RP)", "Orders": k.compliance_hold },
+        { "Measure": "Completed today", "Orders": k.completed_today },
+        { "Measure": "Completed today value incl. VAT (R)", "Orders": k.completed_today_value },
+        { "Measure": "Revenue at risk incl. VAT (R)", "Orders": k.revenue_at_risk },
+        { "Measure": "Oldest active (hours)", "Orders": hrs(k.oldest_hours) },
+      ];
+
+      const wb = XLSX.utils.book_new();
+      const board = XLSX.utils.json_to_sheet(rows);
+      board["!cols"] = [12, 32, 18, 22, 12, 20, 12, 20, 18, 22, 20, 18, 22, 18, 12, 12, 10, 10, 12, 8].map(w => ({ wch: w }));
+      board["!autofilter"] = { ref: `A1:T${ex.rows.length + 1}` };
+      XLSX.utils.book_append_sheet(wb, board, "Orders");
+      const sum = XLSX.utils.json_to_sheet(summary);
+      sum["!cols"] = [{ wch: 36 }, { wch: 22 }, { wch: 10 }, { wch: 20 }, { wch: 10 }];
+      XLSX.utils.book_append_sheet(wb, sum, "Summary");
+      const pad = n => String(n).padStart(2, "0");
+      XLSX.writeFile(wb, `Operations Monitor ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}${pad(stamp.getMinutes())}.xlsx`);
+      if (ex.odoo_unavailable) toast.error("Exported, but order values and units couldn't be read. Try again shortly.", { id: busy });
+      else toast.success(`Exported ${ex.rows.length} orders`, { id: busy });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Export failed", { id: busy });
+    } finally {
+      exportingRef.current = false;
+    }
   };
   const lastUpdatedStr = lastUpdated
     ? lastUpdated.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })

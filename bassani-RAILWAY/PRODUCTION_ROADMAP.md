@@ -5889,7 +5889,9 @@ Sales quotes (unconfirmed) have a softer 48-hour alerting window to flag quotes 
 ### 23.9 — Operations Monitor Excel Export — Built 2026-10-15
 
 - [x] Export button in the Operations Monitor header (`MonitorKit.js` `ExportButton`, shown through `MonitorHeaderBar`'s new optional `actions` slot, so the other monitors are unaffected)
-- [x] Built in the browser from the data already on the board (no new endpoint): a Board sheet with one row per card (stage, order, customer, sales agent, value, units, waiting since/hours, deadline, age, assignee, packer, warehouse, backorder/in production/sample flags) and a Summary sheet (the KPIs and each column's count and value)
+- [x] `GET /api/monitor/export?token=` (`monitor_routes.py::export_monitor_rows`): the same cards as `/data` (it calls it directly), plus sale order number, value excl. VAT, VAT and units read from Odoo in two bounded calls only when Export is clicked, never on the 30s poll; Odoo failure degrades to blank figures (`odoo_unavailable`). Every card now carries `odoo_order_id` and `created_by_name` (first `stage_history` actor, reseller name as fallback); the ticket lookup for board cards now also covers complete entries, which previously showed no assignee on Awaiting Payment / Ready to Collect
+- [x] Orders sheet, one row per order in pipeline order: Sale Order, Customer, Status (Open Quote to Ready to Collect), Created By, Units to Pack (the packing entry's count once on the board, else the order's product quantities), Order Value excl. VAT; then VAT, incl. VAT, order date, sales agent, assigned to, packer, warehouse, in stage since / hours / target, age, backorder / in production / sample; a totals row and filters. Summary sheet: orders, units, value excl. VAT and overdue per stage, plus the board KPIs
+- [x] Fixed: quote and deposit cards used the Odoo record id as the order reference (e.g. 1180, not S01180); the export now uses the real order number
 - [ ] Live check: export from the TV board and a laptop
 
 ### Definition of Done

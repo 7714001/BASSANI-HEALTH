@@ -4,6 +4,8 @@ Operations monitor — read-only live board for TV / big-screen display.
 Public endpoints (token-verified, no login required):
   GET /api/monitor/validate?token=   — check token validity
   GET /api/monitor/data?token=       — full board data + KPIs
+  GET /api/monitor/export?token=     — one row per card for the Excel export
+                                       (23.9; reads Odoo only when clicked)
 
 Admin endpoints (JWT):
   GET  /api/monitor/token            — retrieve current token
@@ -18,6 +20,7 @@ already are); and the quote/deposit-stage order_value lookup (2026-09-20),
 since a ticket with no packing_board entry yet never had its order's
 amount_total stamped anywhere in Mongo.
 """
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -29,6 +32,7 @@ from odoo_client import get_odoo_client
 from services.age_tier import OVERDUE_HOURS, QUOTE_HOURS, hours_elapsed as _hours_elapsed, age_tier as _age_tier
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
+logger = logging.getLogger(__name__)
 
 NO_ID         = {"_id": 0}
 _TERMINAL     = {"complete", "cancelled", "collected", "cleared"}
@@ -119,7 +123,27 @@ def _iso(dt) -> str | None:
 # every call site below is unchanged; see that module's docstring for why.
 
 
-def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False, has_mo_pending: bool = False) -> dict:
+def _creator(ticket: dict | None) -> str | None:
+    """Who generated the order: the actor on the ticket's first stage_history
+    entry (every ticket-creating path writes one), falling back to the
+    reseller's name for a reseller order."""
+    if not ticket:
+        return None
+    hist = ticket.get("stage_history") or []
+    name = hist[0].get("actor_name") if hist else None
+    if name in (None, "", "system", "unknown"):
+        name = ticket.get("reseller_name") or name
+    return name
+
+
+def _odoo_order_id(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "", False) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str | None = None, has_backorder: bool = False, has_mo_pending: bool = False, created_by_name: str | None = None) -> dict:
     clock   = entry.get("queued_at", datetime.now(timezone.utc))
     elapsed = _hours_elapsed(clock)
     return {
@@ -141,6 +165,8 @@ def _board_card(entry: dict, deadline: int = OVERDUE_HOURS, assigned_name: str |
         "rp_approved_at": _iso(entry.get("rp_approved_at")),
         "packer_name":    entry.get("packer_name"),
         "assigned_name":  assigned_name,
+        "created_by_name": created_by_name,
+        "odoo_order_id":  _odoo_order_id(entry.get("order_id")),
         "warehouse_name": entry.get("warehouse_name"),
         # True when a sibling packing_board entry for this same order_id is
         # a still-waiting backorder child (is_backorder/waiting_stock, set
@@ -198,6 +224,8 @@ def _ticket_card(ticket: dict, order_value: float | None = None) -> dict:
         "rp_approved_at": None,
         "packer_name":    None,
         "assigned_name":  ticket.get("assigned_to_name"),
+        "created_by_name": _creator(ticket),
+        "odoo_order_id":  _odoo_order_id(ticket.get("order_id")),
         "warehouse_name": None,
         "has_backorder":  False,  # not reachable pre-packing-board-completion
         "has_mo_pending": False,  # not reachable pre-packing-board-completion
@@ -226,13 +254,15 @@ def _collection_card(ticket: dict, board: dict) -> dict:
         "rp_approved_at": None,
         "packer_name":    None,
         "assigned_name":  ticket.get("assigned_to_name"),
+        "created_by_name": _creator(ticket),
+        "odoo_order_id":  _odoo_order_id(ticket.get("order_id") or ticket.get("orders_ticket_ref")),
         "warehouse_name": board.get("warehouse_name"),
         "has_backorder":  False,  # not reachable pre-packing-board-completion
         "has_mo_pending": False,  # not reachable pre-packing-board-completion
     }
 
 
-def _board_ready_card(entry: dict, assigned_name: str | None = None, status: str = "ready_for_collection") -> dict:
+def _board_ready_card(entry: dict, assigned_name: str | None = None, status: str = "ready_for_collection", created_by_name: str | None = None) -> dict:
     """Card for a packing board 'complete' entry with no linked sales ticket.
     Clock starts at completed_at — how long the order has been waiting for collection.
     status="awaiting_payment" (8.69): packed, notice held until paid; clock
@@ -258,6 +288,8 @@ def _board_ready_card(entry: dict, assigned_name: str | None = None, status: str
         "rp_approved_at": _iso(entry.get("rp_approved_at")),
         "packer_name":    entry.get("packer_name") or entry.get("assigned_packer"),
         "assigned_name":  assigned_name,
+        "created_by_name": created_by_name,
+        "odoo_order_id":  _odoo_order_id(entry.get("order_id")),
         "warehouse_name": entry.get("warehouse_name"),
         "has_backorder":  False,  # not reachable once an order is already ready for collection
         "has_mo_pending": False,  # not reachable once an order is already ready for collection
@@ -369,17 +401,24 @@ async def get_monitor_data(token: str = Query("")):
 
     # Ticket assignee lookup for packing board cards (board entries don't store assignee)
     board_order_ids = [e.get("order_id") for e in board_active if e.get("order_id")]
+    # Covers the complete (payment / ready-to-collect) entries too, which
+    # previously got no assignee; also captures who generated the order
+    # (first stage_history entry) for the Excel export.
+    lookup_ids = list({*board_order_ids,
+                       *[e.get("order_id") for e in board_complete if e.get("order_id")]})
     ticket_assign_map: dict = {}
-    if board_order_ids:
+    ticket_creator_map: dict = {}
+    if lookup_ids:
         ticket_assigns = await col("tickets").find(
-            {"orders_ticket_ref": {"$in": board_order_ids}},
-            {"orders_ticket_ref": 1, "assigned_to_name": 1, "_id": 0},
+            {"orders_ticket_ref": {"$in": lookup_ids}},
+            {"orders_ticket_ref": 1, "assigned_to_name": 1, "reseller_name": 1,
+             "stage_history": {"$slice": 1}, "_id": 0},
         ).to_list(length=1000)
-        ticket_assign_map = {
-            t["orders_ticket_ref"]: t.get("assigned_to_name")
-            for t in ticket_assigns
-            if t.get("orders_ticket_ref")
-        }
+        for t in ticket_assigns:
+            ref = t.get("orders_ticket_ref")
+            if ref:
+                ticket_assign_map[ref] = t.get("assigned_to_name")
+                ticket_creator_map[ref] = _creator(t)
 
     # Backorder signal (2026-08-22) — a still-waiting backorder child entry
     # shares its order_id with the primary entry it split from
@@ -468,13 +507,14 @@ async def get_monitor_data(token: str = Query("")):
         a_name    = ticket_assign_map.get(order_id)
         has_bo    = backorder_map.get(order_id, False)
         has_mo    = mo_pending_map.get(order_id, False)
+        c_name    = ticket_creator_map.get(order_id)
         if status in ("queued", "packing"):
-            packing_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
+            packing_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo, created_by_name=c_name))
         elif status == "ready":
             if not entry.get("qa_approved_at"):
-                qa_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
+                qa_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo, created_by_name=c_name))
             else:
-                rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo))
+                rp_col.append(_board_card(entry, assigned_name=a_name, has_backorder=has_bo, has_mo_pending=has_mo, created_by_name=c_name))
 
     # 8.69 — packed and signed off, but the customer notice is held until the
     # invoice is paid: its own column, so Ready to Collect only ever shows
@@ -483,7 +523,8 @@ async def get_monitor_data(token: str = Query("")):
         return bool(e.get("payment_hold")) and not e.get("collection_released_at")
 
     payment_col = [
-        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")), status="awaiting_payment")
+        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")), status="awaiting_payment",
+                          created_by_name=ticket_creator_map.get(e.get("order_id", "")))
         for e in board_complete if _held(e)
     ]
 
@@ -493,7 +534,8 @@ async def get_monitor_data(token: str = Query("")):
         _collection_card(t, board_coll_map.get(t.get("orders_ticket_ref", ""), {}))
         for t in collection_tickets
     ] + [
-        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")))
+        _board_ready_card(e, ticket_assign_map.get(e.get("order_id", "")),
+                          created_by_name=ticket_creator_map.get(e.get("order_id", "")))
         for e in board_complete
         if e.get("order_id") not in covered_order_ids and not _held(e)
     ]
@@ -570,4 +612,114 @@ async def get_monitor_data(token: str = Query("")):
         },
         "column_totals": column_totals,
         "server_time": now.isoformat(),
+    }
+
+
+# ── Public: Excel export rows (23.9) ──────────────────────────────────────────
+
+_EXPORT_STAGES = [
+    ("quotes",     "Open Quote"),
+    ("deposit",    "Awaiting Deposit"),
+    ("packing",    "Packing"),
+    ("qa",         "QA Review"),
+    ("rp",         "RP Review"),
+    ("payment",    "Awaiting Payment"),
+    ("collection", "Ready to Collect"),
+]
+
+
+@router.get("/export")
+async def export_monitor_rows(token: str = Query("")):
+    """One row per card on the board, in pipeline order, for the Excel export.
+
+    Same cards as /data (it is called directly, so the two can never
+    disagree), plus the figures the board itself doesn't need: the sale
+    order number, value excl. VAT and units, read from Odoo in two bounded
+    calls only when someone clicks Export, never on the 30s poll. Units are
+    the packing entry's own count once an order is on the packing board
+    (what this delivery has to pack, which for a backorder is only the
+    remainder), otherwise the order's product quantities. An Odoo failure
+    degrades to blank figures with odoo_unavailable set, never a failed export.
+    """
+    data = await get_monitor_data(token)   # verifies the token
+    columns = data["columns"]
+
+    order_ids = sorted({c["odoo_order_id"] for key, _ in _EXPORT_STAGES
+                        for c in columns.get(key, []) if c.get("odoo_order_id")})
+    orders: dict = {}
+    line_units: dict = {}
+    odoo_unavailable = False
+    if order_ids:
+        try:
+            odoo = get_odoo_client()
+            for r in odoo.search_read(
+                "sale.order", domain=[("id", "in", order_ids)],
+                fields=["id", "name", "amount_untaxed", "amount_tax", "amount_total", "date_order"],
+                limit=len(order_ids),
+            ):
+                orders[r["id"]] = r
+            try:
+                lines = odoo.search_read(
+                    "sale.order.line", domain=[("order_id", "in", order_ids)],
+                    fields=["order_id", "product_uom_qty", "display_type", "is_downpayment"],
+                    limit=20000,
+                )
+            except Exception:
+                lines = odoo.search_read(
+                    "sale.order.line", domain=[("order_id", "in", order_ids)],
+                    fields=["order_id", "product_uom_qty", "display_type"],
+                    limit=20000,
+                )
+            for ln in lines:
+                if ln.get("display_type") or ln.get("is_downpayment"):
+                    continue
+                oid = ln["order_id"][0] if ln.get("order_id") else None
+                if oid:
+                    line_units[oid] = line_units.get(oid, 0) + float(ln.get("product_uom_qty") or 0)
+        except Exception as e:
+            logger.warning("monitor_export_odoo_failed error=%s", e)
+            odoo_unavailable = True
+
+    rows = []
+    for key, label in _EXPORT_STAGES:
+        for c in columns.get(key, []):
+            oid = c.get("odoo_order_id")
+            so = orders.get(oid) if oid else None
+            units = c.get("total_units") or 0
+            if not units and oid in line_units:
+                units = line_units[oid]
+            ref = (so or {}).get("name") or c.get("so_ref") or ""
+            # A bare numeric so_ref is an Odoo record id, not an order number.
+            if not so and str(ref).isdigit():
+                ref = ""
+            rows.append({
+                "stage_key":       key,
+                "status":          label,
+                "sale_order":      ref,
+                "customer_name":   c.get("customer_name") or "",
+                "created_by":      c.get("created_by_name") or "",
+                "units":           units if (units or so) else None,
+                "value_excl_vat":  float(so["amount_untaxed"]) if so else None,
+                "vat":             float(so["amount_tax"]) if so else None,
+                "value_incl_vat":  float(so["amount_total"]) if so else c.get("order_value"),
+                "order_date":      (so or {}).get("date_order") or None,
+                "sales_agent":     c.get("reseller_name") or "",
+                "assigned_to":     c.get("assigned_name") or "",
+                "packer":          c.get("packer_name") or "",
+                "warehouse":       c.get("warehouse_name") or "",
+                "waiting_since":   c.get("clock_start"),
+                "hours_waiting":   c.get("hours_elapsed"),
+                "deadline_hours":  c.get("deadline_hours"),
+                "age_tier":        c.get("age_tier"),
+                "backorder":       bool(c.get("has_backorder")),
+                "in_production":   bool(c.get("has_mo_pending")),
+                "sample":          bool(c.get("is_sample")),
+            })
+
+    return {
+        "rows": rows,
+        "kpis": data["kpis"],
+        "column_totals": data["column_totals"],
+        "odoo_unavailable": odoo_unavailable,
+        "server_time": data["server_time"],
     }

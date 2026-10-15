@@ -1283,7 +1283,7 @@ The display refreshes automatically every 30 seconds. Every monitor display shar
 
 **Rotating the token:** If the display URL is compromised or you want to revoke access to a specific device, click **Rotate token** on the Operations Monitor card in Settings → Monitor Displays. The old URL stops working immediately. Copy the new URL and update all display devices.
 
-**Export to Excel (2026-10-15):** the download icon in the top-right of the Operations Monitor saves what the board is showing right now as an Excel file: a Board sheet with one row per order card (stage, order, customer, value, how long it's been waiting, who it's with, and backorder/production flags) and a Summary sheet with the figures across the top and each column's count and value.
+**Export to Excel (2026-10-15):** the download icon in the top-right of the Operations Monitor saves every order on the board right now as an Excel file. The **Orders** sheet lists one row per order: Sale Order, Customer, Status (Open Quote through to Ready to Collect), Created By (who placed the order), Units to Pack and Order Value excl. VAT, followed by VAT and the incl. VAT value, order date, sales agent, who it's assigned to, packer, warehouse, how long it has been in its current stage, whether it's on track or overdue, and backorder, in production and sample flags. A totals row sits at the bottom and every column can be filtered. The **Summary** sheet gives orders, units, value excl. VAT and overdue count per stage, plus the figures across the top of the board.
 
 ### Reading the Monitor
 
