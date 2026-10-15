@@ -1134,6 +1134,8 @@ Waiting requests are listed under **Orders > Deposit Requests**, with a column s
 
 Either release sends the order to the packing board with no deposit invoice. The full invoice is created unpaid at Mark Complete.
 
+**No-deposit orders register (2026-10-15):** the **No-deposit orders** tab on **Orders > Deposit Requests** lists every order sent for packing without a deposit, however it was approved: through a request, directly on the Sales ticket (Finance can approve pay before collection without anyone asking), or automatically. Each row shows the arrangement, who approved it, when and why, whether it went through a second person (**Directly** means no request was involved; **Own request** means the approver also asked), how old the order is, where it is now, and what's still owing, with the invoice due date and days overdue. Tiles at the top total the orders, the amount still owing, overdue invoices and direct approvals. Filter by arrangement, how it was approved, or only orders still owing, tick **Include closed** for finished orders, and **Export** to Excel. Click a row to open the Sales ticket.
+
 If you hold the release permission yourself, you don't need a request: click **Release on Account** on the ticket. For a customer without account terms it offers the same two release options.
 
 **Small deposits:** if you register a deposit under 10% of the order total, the window warns you and asks for a reason. Token deposits create extra invoices; use pay before collection, or Request No Deposit, instead.

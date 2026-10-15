@@ -1372,6 +1372,196 @@ async def list_release_requests(
     return {"requests": out}
 
 
+_NO_DEPOSIT_PACK_LABEL = {
+    "waiting_stock": "Waiting on stock",
+    "queued":        "Queued for packing",
+    "packing":       "Being packed",
+    "ready":         "Awaiting QA/RP sign-off",
+    "complete":      "Ready for collection",
+    "collected":     "Collected",
+}
+
+
+@router.get("/no-deposit-orders")
+async def list_no_deposit_orders(
+    scope: str = "open",
+    current_user: dict = Depends(require_any_permission("tickets.release_on_account", "tickets.finance_confirm")),
+):
+    """8.69e — the No-Deposit Orders register on the Deposit Requests page:
+    every order sent for packing without a deposit (pay before collection or
+    released on account), however it was approved: through a request, directly
+    on the Sales ticket, or automatically at confirm. Who approved it, when,
+    why, and whether it went through a second person, plus order age, where it
+    is now and what's still owed (read live from Odoo).
+
+    scope: open (orders still in progress, the default) or all (adds the 500
+    most recent closed ones). Literal route, so it must stay registered before
+    GET /{ticket_id}."""
+    query: dict = {"type": "sales", "$or": [
+        {"payment_arrangement": {"$in": ["pay_before_collection", "on_account"]}},
+        {"pbc_approved_at": {"$ne": None}},
+        {"released_on_account_at": {"$ne": None}},
+    ]}
+    if scope != "all":
+        query["exit_status"] = None
+    tickets = await col("tickets").find(query, {
+        "customer_name": 1, "order_id": 1, "order_name": 1, "status": 1, "exit_status": 1, "created_at": 1,
+        "reseller_name": 1, "assigned_to_name": 1, "payment_arrangement": 1, "release_type": 1,
+        "pbc_approved_at": 1, "pbc_approved_by": 1, "pbc_approved_by_name": 1, "pbc_reason": 1,
+        "released_on_account_at": 1, "released_on_account_by": 1, "released_on_account_by_name": 1,
+        "released_on_account_reason": 1, "on_account_payment_term": 1, "release_request": 1,
+    }).to_list(2000)
+
+    def _approved_at(t):
+        return t.get("pbc_approved_at") or t.get("released_on_account_at")
+
+    def _sort_ts(t):
+        d = _approved_at(t) or t.get("created_at")
+        if not isinstance(d, datetime):
+            return 0.0
+        return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()
+
+    tickets.sort(key=_sort_ts, reverse=True)
+    if scope == "all":
+        tickets = tickets[:500]
+
+    now = datetime.now(timezone.utc)
+    today = (now + timedelta(hours=2)).date()
+    order_ids = list({t["order_id"] for t in tickets if t.get("order_id")})
+    orders: dict = {}
+    invoices: dict = {}
+    odoo_unavailable = False
+    if order_ids:
+        try:
+            odoo = get_odoo_client()
+            orders = {o["id"]: o for o in odoo.search_read(
+                "sale.order", [("id", "in", order_ids)],
+                fields=["id", "name", "amount_total", "amount_untaxed", "invoice_ids", "state", "date_order"],
+                limit=len(order_ids),
+            )}
+            inv_ids = list({i for o in orders.values() for i in (o.get("invoice_ids") or [])})
+            invoices = {i["id"]: i for i in _order_invoices(odoo, inv_ids)}
+        except Exception as e:
+            logger.warning("no_deposit_orders_odoo_failed error=%s", e)
+            odoo_unavailable = True
+
+    entries_by_order: dict = {}
+    if order_ids:
+        async for e in col("packing_board").find(
+            {"order_id": {"$in": [str(i) for i in order_ids]}, "status": {"$ne": "cleared"}},
+            {"_id": 0, "order_id": 1, "status": 1, "payment_hold": 1, "payment_hold_at": 1,
+             "collection_released_at": 1, "completed_at": 1, "is_backorder": 1},
+        ):
+            entries_by_order.setdefault(int(e["order_id"]), []).append(e)
+
+    def _days(dt):
+        if not dt:
+            return None
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(int((now - dt).total_seconds() // 86400), 0)
+
+    rows = []
+    for t in tickets:
+        oid = t.get("order_id")
+        order = orders.get(oid) or {}
+        arrangement = t.get("payment_arrangement") or (
+            "pay_before_collection" if t.get("pbc_approved_at") else "on_account")
+        is_pbc = arrangement == "pay_before_collection"
+        approved_at = _approved_at(t)
+        approved_by_id = t.get("pbc_approved_by") if is_pbc else t.get("released_on_account_by")
+        rr = t.get("release_request") or {}
+        decided_via_request = (rr.get("status") in ("pay_before_collection", "released", "exception")
+                               and rr.get("decided_at"))
+        if t.get("release_type") == "auto" and not is_pbc:
+            via = "automatic"
+        elif decided_via_request:
+            via = "request"
+        else:
+            via = "direct"
+
+        # Where the order is now.
+        entries = entries_by_order.get(oid, [])
+        held = [e for e in entries if e.get("payment_hold") and not e.get("collection_released_at")]
+        if t.get("exit_status") == "complete":
+            stage_label = "Collected"
+        elif t.get("exit_status"):
+            stage_label = "Closed: " + str(t["exit_status"]).replace("_", " ")
+        elif held:
+            stage_label = "Packed, waiting on payment"
+        elif entries:
+            rank = ["waiting_stock", "queued", "packing", "ready", "complete", "collected"]
+            least = min((e.get("status") for e in entries if e.get("status") in rank),
+                        key=rank.index, default=None)
+            stage_label = _NO_DEPOSIT_PACK_LABEL.get(least, "In fulfilment")
+        elif order.get("state") == "cancel":
+            stage_label = "Order cancelled"
+        else:
+            stage_label = "Approved, not on the packing board yet"
+
+        # Money, live from Odoo.
+        total = paid = owing = None
+        open_inv = None
+        days_overdue = None
+        if order:
+            order_invoices = [invoices[i] for i in (order.get("invoice_ids") or []) if i in invoices]
+            total = float(order.get("amount_total") or 0)
+            paid = _paid_on_invoices(order_invoices)
+            owing = max(round(total - paid, 2), 0.0)
+            open_list = [i for i in order_invoices if float(i.get("amount_residual") or 0) > 0.005]
+            open_inv = max(open_list, key=lambda i: i["id"]) if open_list else None
+            due = (open_inv or {}).get("invoice_date_due")
+            if due and owing > 0.005:
+                try:
+                    late = (today - datetime.strptime(str(due)[:10], "%Y-%m-%d").date()).days
+                    days_overdue = late if late > 0 else 0
+                except ValueError:
+                    days_overdue = None
+
+        rows.append({
+            "ticket_id": str(t["_id"]),
+            "ref": f"TKT-{str(t['_id'])[-8:].upper()}",
+            "customer_name": t.get("customer_name"),
+            "reseller_name": t.get("reseller_name"),
+            "assigned_to_name": t.get("assigned_to_name"),
+            "order_id": oid,
+            "order_name": order.get("name") or t.get("order_name"),
+            # Odoo returns "YYYY-MM-DD HH:MM:SS" in UTC; send ISO so every browser parses it.
+            "order_date": (str(order["date_order"]).replace(" ", "T") + "Z") if order.get("date_order") else t.get("created_at"),
+            "order_age_days": _days(order.get("date_order") or t.get("created_at")),
+            "arrangement": arrangement,
+            "release_type": t.get("release_type"),
+            "payment_term": t.get("on_account_payment_term") if not is_pbc else None,
+            "approved_at": approved_at,
+            "days_since_approval": _days(approved_at),
+            "approved_by_name": t.get("pbc_approved_by_name") if is_pbc else t.get("released_on_account_by_name"),
+            "reason": t.get("pbc_reason") if is_pbc else t.get("released_on_account_reason"),
+            "via": via,
+            "requested_by_name": rr.get("requested_by_name") if decided_via_request else None,
+            "request_reason": rr.get("reason") if decided_via_request else None,
+            "self_approved": bool(decided_via_request and rr.get("requested_by_id")
+                                  and rr.get("requested_by_id") == approved_by_id),
+            "stage_label": stage_label,
+            "closed": bool(t.get("exit_status")),
+            "waiting_on_payment_days": _days(min((e.get("payment_hold_at") or e.get("completed_at")
+                                                  for e in held if e.get("payment_hold_at") or e.get("completed_at")),
+                                                 default=None)) if held else None,
+            "order_total": total,
+            "amount_paid": paid,
+            "amount_owing": owing,
+            "invoice_name": (open_inv or {}).get("name"),
+            "invoice_due_date": (open_inv or {}).get("invoice_date_due") or None,
+            "days_overdue": days_overdue,
+        })
+
+    return {"rows": rows, "odoo_unavailable": odoo_unavailable}
+
+
 @router.get("/{ticket_id}")
 async def get_ticket(
     ticket_id: str,
